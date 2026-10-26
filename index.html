@@ -58,10 +58,8 @@
   .ph { position:absolute; inset:0; margin:0; transform:translateY(100%); transition:transform .9s var(--ease); }
   .ph.on   { transform:translateY(0); }
   .ph.past { transform:translateY(-100%); }
-  /* The photo keeps full height and stays centred: it covers the half panel, and when the
-     panel opens to full screen the whole frame shows, with a blurred copy filling the sides. */
   .ph .bg { position:absolute; inset:-60px; background:center / cover no-repeat; filter:blur(40px) brightness(.8); }
-  .ph img { position:absolute; top:0; left:50%; height:100%; width:auto; max-width:none; transform:translateX(-50%); }
+  .ph img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
   .ph figcaption { position:absolute; left:0; right:0; bottom:0; padding:120px 40px 40px; color:#fff;
     background:linear-gradient(transparent, rgba(0,0,0,.72)); transition:padding 1.1s var(--ease); }
   .ph .kicker { font-size:12px; letter-spacing:.12em; text-transform:uppercase; opacity:.8; }
@@ -104,6 +102,12 @@
     .photos { bottom:50%; width:100%; transform:translateY(-100%); }
     body.split .photos { transform:translateY(0); }
     body.full .photos { bottom:0; }
+    /* Phone full screen: show the photo at full width; a blurred copy extends it above and below. */
+    .ph img { inset:auto; top:50%; left:0; height:auto; min-height:100%; transform:translateY(-50%);
+      transition:min-height 1.1s var(--ease); }
+    body.full .ph img { min-height:0;
+      -webkit-mask-image:linear-gradient(transparent, #000 12%, #000 88%, transparent);
+      mask-image:linear-gradient(transparent, #000 12%, #000 88%, transparent); }
     .ph figcaption, body.full .ph figcaption { padding:80px 16px 24px; }
     .ph p { font-size:13px; }
     body.split .hint { opacity:0; }
