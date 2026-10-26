@@ -52,10 +52,10 @@
   body.full .chapter-label { opacity:0; transition-delay:0s; }
 
   .photos { position:fixed; top:0; right:0; bottom:0; width:50%; overflow:hidden; background:#1b1814;
-    transform:translateX(100%); transition:transform .9s var(--ease), width 1.1s var(--ease), bottom 1.1s var(--ease); }
+    transform:translateX(100%); transition:transform .9s var(--ease), width 1.1s var(--ease), top 1.1s var(--ease); }
   body.split .photos { transform:translateX(0); }
   body.full .photos { width:100%; }
-  .ph { position:absolute; inset:0; margin:0; transform:translateY(100%); transition:transform .9s var(--ease); }
+  .ph { position:absolute; inset:0; margin:0; overflow:hidden; transform:translateY(100%); transition:transform .9s var(--ease); }
   .ph.on   { transform:translateY(0); }
   .ph.past { transform:translateY(-100%); }
   .ph .bg { position:absolute; inset:-60px; background:center / cover no-repeat; filter:blur(40px) brightness(.8); }
@@ -98,10 +98,10 @@
     .dots { right:12px; }
     .meta { font-size:13px; }
     .chapter-label, body.chapter .hint { left:50%; }
-    .chapter-label { top:calc(50% + 16px); }
-    .photos { bottom:50%; width:100%; transform:translateY(-100%); }
+    .chapter-label { top:44px; }
+    .photos { top:50%; width:100%; transform:translateY(100%); }
     body.split .photos { transform:translateY(0); }
-    body.full .photos { bottom:0; }
+    body.full .photos { top:0; }
     /* Phone full screen: show the photo at full width; a blurred copy extends it above and below. */
     .ph img { inset:auto; top:50%; left:0; height:auto; min-height:100%; transform:translateY(-50%);
       transition:min-height 1.1s var(--ease); }
@@ -187,7 +187,7 @@ function tbilisiCamera(map) {
   const pts = PLACES.map(p => p.ll);
   const b = pts.reduce((b, p) => b.extend(p), new maplibregl.LngLatBounds(pts[0], pts[0]));
   const pad = narrow()
-    ? { top: innerHeight / 2 + 110, left: 50, right: 50, bottom: 60 }
+    ? { top: 130, left: 60, right: 60, bottom: innerHeight / 2 + 60 }
     : { top: 170, left: 110, right: innerWidth / 2 + 110, bottom: 110 };
   return map.cameraForBounds(b, { padding: pad }) || { center: CITIES[TB].ll, zoom: 13 };
 }
