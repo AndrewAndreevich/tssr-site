@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>School for Social Research</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root { --ink:#16130f; --paper:#f2eee6; --muted:#6d655a; --accent:#a8412a; --ease:cubic-bezier(.7,0,.2,1); }
+  html, body { margin:0; height:100%; overflow:hidden; background:var(--paper); color:var(--ink);
+    font-family:Inter, system-ui, sans-serif; -webkit-font-smoothing:antialiased; }
+
+  .maps { position:fixed; inset:0; overflow:hidden; }
+  .map { position:absolute; inset:0; filter:grayscale(1) contrast(1.08) brightness(1.03);
+    transition:filter .6s ease; will-change:transform; }
+  .veil { position:fixed; inset:0; pointer-events:none; transition:opacity .6s ease;
+    background:radial-gradient(ellipse 50% 40% at center, rgba(242,238,230,.7) 0%, rgba(242,238,230,.15) 60%, rgba(242,238,230,.55) 100%); }
+
+  .stage { position:fixed; inset:0; display:grid; place-items:center; text-align:center;
+    padding:0 16px; pointer-events:none; transition:opacity .5s ease; }
+  .city { font-family:'Instrument Serif', serif; font-weight:400; line-height:.9; letter-spacing:-.02em;
+    font-size:clamp(64px, 12vw, 190px); }
+  .rest { font-family:'Instrument Serif', serif; font-style:italic; font-size:clamp(22px, 3.4vw, 48px);
+    margin-top:.15em; }
+  .meta { margin:28px auto 0; max-width:560px; font-size:14px; line-height:1.55; color:var(--muted); min-height:4.6em; }
+  .meta b { color:var(--ink); font-weight:500; }
+
+  .swap { display:inline-block; transition-property:opacity, transform, filter; transition-duration:.45s;
+    transition-timing-function:cubic-bezier(.2,.7,.2,1); }
+  .swap.out-up   { opacity:0; transform:translateY(-.35em); filter:blur(6px); }
+  .swap.out-down { opacity:0; transform:translateY(.35em);  filter:blur(6px); }
+  .swap.pre-up   { opacity:0; transform:translateY(.35em);  filter:blur(6px); transition:none; }
+  .swap.pre-down { opacity:0; transform:translateY(-.35em); filter:blur(6px); transition:none; }
+  /* Montage: names ride in from below with the map, a beat slower than it. */
+  .swap.reel-out-up   { opacity:0; transform:translateY(-.45em); filter:blur(3px); }
+  .swap.reel-out-down { opacity:0; transform:translateY(.45em);  filter:blur(3px); }
+  .swap.reel-pre-up   { opacity:0; transform:translateY(.8em);   filter:blur(3px); transition:none; }
+  .swap.reel-pre-down { opacity:0; transform:translateY(-.8em);  filter:blur(3px); transition:none; }
+  .map img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  /* Tbilisi chapter: the camera never moves. The outline draws in place, photos slide in
+     from the right over half the screen and pins appear; the last photo then takes the whole screen. */
+  body.chapter .map { filter:none; }
+  body.chapter .veil, body.chapter .stage { opacity:0; }
+  .chapter-label { position:fixed; top:22px; left:25%; transform:translateX(-50%); text-align:center;
+    font-family:'Instrument Serif', serif; font-size:clamp(28px, 4vw, 52px); line-height:1;
+    opacity:0; pointer-events:none; transition:opacity .6s ease; }
+  .chapter-label small { display:block; margin-top:8px; font-family:Inter, sans-serif; font-size:12px;
+    letter-spacing:.12em; text-transform:uppercase; color:var(--muted); }
+  body.chapter .chapter-label { opacity:1; transition-delay:.3s; }
+  body.full .chapter-label { opacity:0; transition-delay:0s; }
+
+  .photos { position:fixed; top:0; right:0; bottom:0; width:50%; overflow:hidden; background:#1b1814;
+    transform:translateX(100%); transition:transform .9s var(--ease), width 1.1s var(--ease), top 1.1s var(--ease); }
+  body.split .photos { transform:translateX(0); }
+  body.full .photos { width:100%; }
+  .ph { position:absolute; inset:0; margin:0; transform:translateY(100%); transition:transform .9s var(--ease); }
+  .ph.on   { transform:translateY(0); }
+  .ph.past { transform:translateY(-100%); }
+  .ph img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  .ph figcaption { position:absolute; left:0; right:0; bottom:0; padding:120px 40px 40px; color:#fff;
+    background:linear-gradient(transparent, rgba(0,0,0,.72)); transition:padding 1.1s var(--ease); }
+  .ph .kicker { font-size:12px; letter-spacing:.12em; text-transform:uppercase; opacity:.8; }
+  .ph h2 { margin:8px 0 0; font-family:'Instrument Serif', serif; font-weight:400; font-size:clamp(32px, 3.6vw, 54px);
+    line-height:1; transition:font-size 1.1s var(--ease); }
+  .ph p { margin:12px 0 0; max-width:440px; font-size:14px; line-height:1.55; opacity:.85; }
+  body.full .ph figcaption { padding:160px 64px 64px; }
+  body.full .ph h2 { font-size:clamp(48px, 7vw, 110px); }
+
+  .pin { width:0; height:0; }
+  .pin i { position:absolute; left:-6px; top:-6px; width:12px; height:12px; border-radius:50%;
+    background:var(--ink); opacity:0; transform:scale(.5); transition:opacity .5s ease, transform .5s ease, background .4s ease; }
+  .pin.shown i { opacity:1; transform:scale(1); }
+  .pin.active i { background:var(--accent); }
+
+  /* Page opens on a blank sheet; the montage fades in from under it. */
+  .cover { position:fixed; inset:0; z-index:10; background:var(--paper); pointer-events:none;
+    transition:opacity 1.6s cubic-bezier(.4,0,.2,1); }
+  .cover.gone { opacity:0; }
+
+  .counter { position:fixed; top:24px; left:24px; font-size:13px; letter-spacing:.08em; color:var(--muted); z-index:2; }
+  .counter b { color:var(--accent); font-weight:500; }
+  .dots { position:fixed; right:24px; top:50%; transform:translateY(-50%); display:flex; flex-direction:column; gap:10px; z-index:2; }
+  .dots i { width:6px; height:6px; border-radius:50%; background:var(--ink); opacity:.18; transition:opacity .3s, transform .3s, background .3s; }
+  .dots i.on { opacity:1; background:var(--accent); transform:scale(1.5); }
+  body.split .dots i:not(.on) { background:#fff; opacity:.45; }
+  body.full .counter { color:rgba(255,255,255,.7); }
+  .hint { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); font-size:12px; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--muted); transition:opacity .4s; }
+  body.chapter .hint { left:25%; }
+  body.full .hint { opacity:0; }
+  .maplibregl-ctrl-attrib { font-size:10px; opacity:.6; }
+
+  @media (max-width:640px) {
+    .counter { top:16px; left:16px; }
+    .dots { right:12px; }
+    .meta { font-size:13px; }
+    .chapter-label, body.chapter .hint { left:50%; }
+    .chapter-label { top:44px; }
+    .photos { top:50%; width:100%; transform:translateY(100%); }
+    body.split .photos { transform:translateY(0); }
+    body.full .photos { top:0; }
+    .ph figcaption, body.full .ph figcaption { padding:80px 16px 24px; }
+    .ph p { font-size:13px; }
+    body.split .hint { opacity:0; }
+  }
+</style>
+</head>
+<body>
+<div class="maps" id="maps"></div>
+<div class="veil"></div>
+
+<div class="stage">
+  <div>
+    <div class="city"><span class="swap" id="city">Paris</span></div>
+    <div class="rest">School for Social Research</div>
+    <div class="meta"><span class="swap" id="meta"></span></div>
+  </div>
+</div>
+
+<div class="chapter-label">Tbilisi<small>Where TSSR works</small></div>
+<div class="photos" id="photos"></div>
+
+<div class="counter"><b id="idx">01</b> / <span id="total"></span></div>
+<div class="dots" id="dots"></div>
+<div class="hint">Scroll</div>
+<div class="cover" id="cover"></div>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script>
+// Schools of thought named after the city where the research happened. The first one opens
+// the page; one scroll then runs a montage through the rest and lands on Tbilisi (the last).
+const CITIES = [
+  { city:'Paris',      ll:[2.3431, 48.8466],  school:'Durkheimian school',  note:'<b>L\'Année sociologique</b>, 1898 · Durkheim, Mauss · sociology as a science of social facts' },
+  { city:'Chicago',    ll:[-87.5987, 41.7886], school:'Chicago School',      note:'<b>University of Chicago</b>, 1915–1935 · Park, Burgess, Thomas · the city as a laboratory' },
+  { city:'Frankfurt',  ll:[8.6522, 50.1196],   school:'Frankfurt School',    note:'<b>Institut für Sozialforschung</b>, 1923 · Horkheimer, Adorno, Marcuse · critical theory' },
+  { city:'Vienna',     ll:[16.3601, 48.2133],  school:'Vienna Circle',       note:'<b>Wiener Kreis</b>, 1924–1936 · Schlick, Neurath, Carnap · Lazarsfeld\'s Marienthal study, 1933' },
+  { city:'New York',   ll:[-73.9969, 40.7355], school:'New School',          note:'<b>New School for Social Research</b>, 1919 · Dewey, Veblen, Beard · University in Exile, 1933' },
+  { city:'Manchester', ll:[-2.2339, 53.4668],  school:'Manchester School',   note:'<b>University of Manchester</b>, 1949 → · Max Gluckman · the extended case method' },
+  { city:'Toronto',    ll:[-79.3957, 43.6629], school:'Toronto School',      note:'<b>University of Toronto</b>, 1950s · Innis, McLuhan · the medium is the message' },
+  { city:'Birmingham', ll:[-1.9305, 52.4508],  school:'Birmingham School',   note:'<b>Centre for Contemporary Cultural Studies</b>, 1964 · Hoggart, Stuart Hall · cultural studies' },
+  { city:'Tartu',      ll:[26.7206, 58.3810],  school:'Tartu–Moscow School', note:'<b>University of Tartu</b>, 1964 → · Yuri Lotman · semiotics of culture' },
+  { city:'Edinburgh',  ll:[-3.1883, 55.9445],  school:'Edinburgh School',    note:'<b>Science Studies Unit</b>, 1970s · Barnes, Bloor · the strong programme' },
+  { city:'Bielefeld',  ll:[8.4935, 52.0379],   school:'Bielefeld School',    note:'<b>Bielefeld University</b>, 1970s · Wehler, Kocka · history as social science' },
+  { city:'Amsterdam',  ll:[4.9114, 52.3633],   school:'Amsterdam School',    note:'<b>Amsterdam School for Social Science Research</b>, 1986 · de Swaan, Goudsblom · figurational sociology' },
+  { city:'Copenhagen', ll:[12.5683, 55.6761],  school:'Copenhagen School',   note:'<b>Copenhagen Peace Research Institute</b>, 1985 · Buzan, Wæver · securitization theory' },
+  { city:'Tbilisi',    ll:[44.7850, 41.7058],  school:'TSSR',                note:'<b>Tbilisi School for Social Research</b> · independent think tank · library, research centre, technology workshop' },
+];
+const TB = CITIES.length - 1;
+
+// TSSR places in Tbilisi, shown one by one after the city outline. Texts are drafts.
+const PLACES = [
+  { ll:[44.74522, 41.72609], img:'assets/library.webp',   name:'Library about Georgia', where:'Vazha-Pshavela Ave. 43',
+    text:'The first TSSR office, under the Soviet-era mosaic in Saburtalo — home of the library about Georgia.' },
+  { ll:[44.81480, 41.67630], img:'assets/ortachala.webp', name:'Art Residence',         where:'Ortachala',
+    text:'A residence for artists and fellows in an old house above the river in Ortachala.' },
+  { ll:[44.78972, 41.70340], img:'assets/rustaveli.webp', name:'Research Centre',       where:'Rustaveli Avenue',
+    text:'The research centre in the heart of the city, next to the Academy of Sciences on Rustaveli.' },
+];
+
+// The montage plays by itself on load and lands on Tbilisi.
+// Steps: 0 Tbilisi · places · last photo full screen.
+const FIRST_PLACE = 1, FULL = FIRST_PLACE + PLACES.length, TOTAL = FULL + 1;
+
+const $ = id => document.getElementById(id);
+const wait = ms => new Promise(r => setTimeout(r, ms));
+$('total').textContent = String(TOTAL).padStart(2, '0');
+$('dots').innerHTML = Array.from({ length: TOTAL }, () => '<i></i>').join('');
+$('photos').innerHTML = PLACES.map((p, i) => `
+  <figure class="ph"><img src="${p.img}" alt="${p.name}">
+    <figcaption><div class="kicker">${String(i + 1).padStart(2, '0')} / ${String(PLACES.length).padStart(2, '0')} · ${p.where}</div>
+      <h2>${p.name}</h2><p>${p.text}</p></figcaption></figure>`).join('');
+
+const narrow = () => innerWidth <= 640;
+
+// Frame the TSSR places in the half of the screen the photos leave free, so all pins
+// are visible when they appear and the camera never has to move.
+function tbilisiCamera(map) {
+  const pts = PLACES.map(p => p.ll);
+  const b = pts.reduce((b, p) => b.extend(p), new maplibregl.LngLatBounds(pts[0], pts[0]));
+  const pad = narrow()
+    ? { top: 130, left: 60, right: 60, bottom: innerHeight / 2 + 60 }
+    : { top: 170, left: 110, right: innerWidth / 2 + 110, bottom: 110 };
+  return map.cameraForBounds(b, { padding: pad }) || { center: CITIES[TB].ll, zoom: 13 };
+}
+
+const STYLE = 'https://tiles.openfreemap.org/styles/positron';
+function hideLabels(map) {               // map labels compete with the title
+  map.getStyle().layers.filter(l => l.type === 'symbol')
+    .forEach(l => map.setLayoutProperty(l.id, 'visibility', 'none'));
+}
+
+// One layer per city, stacked and parked above/below the screen. The first city and Tbilisi
+// are live maps; the montage cities in between are pre-rendered 1920×1080 snapshots of the
+// same style (assets/cities/<city>.webp), so the strip never shows blank tiles.
+const pins = [], maps = [];
+const slug = c => c.city.toLowerCase().replace(/[^a-z]+/g, '-');
+const layers = CITIES.map((c, k) => {
+  const el = document.createElement('div');
+  el.className = 'map';
+  el.style.transform = k ? 'translateY(100%)' : 'none';
+  $('maps').appendChild(el);
+  if (k === 0 || k === TB) maps[k] = liveMap(el, c, k);
+  else el.innerHTML = `<img alt="" src="assets/cities/${slug(c)}.webp">`;
+  return el;
+});
+
+function liveMap(el, c, k) {
+  const map = new maplibregl.Map({
+    container: el,
+    style: STYLE,
+    center: c.ll, zoom: 13, interactive: false,
+    attributionControl: { compact: true },
+  });
+  if (k === TB) map.jumpTo(tbilisiCamera(map));
+  map.on('load', () => {
+    map.resize();
+    hideLabels(map);
+    if (k === TB) map.jumpTo(tbilisiCamera(map));
+  });
+  if (k === TB) PLACES.forEach(p => {
+    const pin = document.createElement('div');
+    pin.className = 'pin';
+    pin.innerHTML = '<i></i>';
+    new maplibregl.Marker({ element: pin }).setLngLat(p.ll).addTo(map);
+    pins.push(pin);
+  });
+  return map;
+}
+window.addEventListener('resize', () => {
+  maps.forEach(m => m && m.resize());
+  maps[TB].jumpTo(tbilisiCamera(maps[TB]));
+});
+
+function swapText(el, html, dir, d = 900, reel = false) {
+  const up = dir > 0, tok = el._tok = (el._tok || 0) + 1, cls = reel ? 'reel-' : '';
+  const outT = reel ? d * 0.35 : d * 0.45, inT = reel ? d * 0.8 : d * 0.45;
+  el.style.transitionDuration = outT + 'ms';
+  el.className = 'swap ' + cls + (up ? 'out-up' : 'out-down');
+  setTimeout(() => {
+    if (tok !== el._tok) return;
+    el.innerHTML = html;
+    el.className = 'swap ' + cls + (up ? 'pre-up' : 'pre-down');
+    void el.offsetWidth;               // commit the "pre" state before animating in
+    el.style.transitionDuration = inT + 'ms';
+    el.className = 'swap';
+  }, outT);
+}
+
+let shown = 0;                         // index of the city layer on screen
+function showCity(idx, dir, d) {
+  const inEl = layers[idx], outEl = layers[shown];
+  const tr = `transform ${d}ms cubic-bezier(.45,0,.25,1), filter .6s ease`;
+  inEl.style.transition = 'none';
+  inEl.style.transform = `translateY(${dir > 0 ? 100 : -100}%)`;
+  void inEl.offsetWidth;
+  inEl.style.transition = tr;
+  inEl.style.transform = 'translateY(0)';
+  outEl.style.transition = tr;
+  outEl.style.transform = `translateY(${dir > 0 ? -100 : 100}%)`;
+  swapText($('city'), CITIES[idx].city, dir, d, true);
+  shown = idx;
+}
+
+// Run through every city between the current one and `to`: it starts fast and decays,
+// each hop longer than the last, until it settles on the destination. Each hop starts
+// before the previous one has settled, so the maps run as one continuous strip.
+async function montage(to, dir) {
+  const path = [];
+  for (let i = shown + dir; dir > 0 ? i <= to : i >= to; i += dir) path.push(i);
+  const m = $('meta');
+  m._tok = (m._tok || 0) + 1;
+  m.style.transitionDuration = '';
+  m.className = 'swap ' + (dir > 0 ? 'out-up' : 'out-down');
+  for (let j = 0; j < path.length; j++) {
+    const t = path.length > 1 ? j / (path.length - 1) : 1;
+    const d = Math.round(110 + 330 * Math.pow(t, 2.5));
+    showCity(path[j], dir, d);
+    await wait(j === path.length - 1 ? d * 0.7 : d * 0.68);
+  }
+  const c = CITIES[to];
+  swapText(m, c.school + ' — ' + c.note, dir);
+  await wait(500);
+}
+
+function showPins(active) {            // active: index of the current place, -1 = none
+  pins.forEach((p, k) => {
+    p.classList.toggle('shown', k <= active);
+    p.classList.toggle('active', k === active);
+  });
+}
+
+function showPhoto(active) {
+  [...$('photos').children].forEach((el, k) => {
+    el.classList.toggle('on', k === active);
+    el.classList.toggle('past', k < active);
+  });
+}
+
+function render(i, dir) {
+  document.body.classList.toggle('chapter', i >= FIRST_PLACE);
+  document.body.classList.toggle('split', i >= FIRST_PLACE);
+  document.body.classList.toggle('full', i === FULL);
+  $('idx').textContent = String(i + 1).padStart(2, '0');
+  [...$('dots').children].forEach((d, k) => d.classList.toggle('on', k === i));
+
+  if (i === 0) {
+    showPins(-1);
+    if (dir < 0) showPhoto(0);         // panel slides out with the first photo in place
+    return;
+  }
+  if (i < FULL) {
+    const k = i - FIRST_PLACE;
+    showPhoto(k);
+    setTimeout(() => showPins(k), dir > 0 && k === 0 ? 700 : 300);
+  }
+}
+
+let current = 0, locked = false;
+
+function go(dir) {
+  const next = current + dir;
+  if (locked || next < 0 || next >= TOTAL) return;
+  locked = true;
+  current = next;
+  Promise.all([wait(1300), render(current, dir)]).then(() => locked = false);
+}
+
+let acc = 0;
+window.addEventListener('wheel', e => {
+  e.preventDefault();
+  acc += e.deltaY;
+  if (Math.abs(acc) > 40) { go(Math.sign(acc)); acc = 0; }
+}, { passive: false });
+
+window.addEventListener('keydown', e => {
+  if (['ArrowDown', 'PageDown', ' '].includes(e.key)) go(1);
+  if (['ArrowUp', 'PageUp'].includes(e.key)) go(-1);
+});
+
+let touchY = null;
+window.addEventListener('touchstart', e => touchY = e.touches[0].clientY, { passive: true });
+window.addEventListener('touchend', e => {
+  if (touchY === null) return;
+  const dy = touchY - e.changedTouches[0].clientY;
+  if (Math.abs(dy) > 40) go(Math.sign(dy));
+  touchY = null;
+});
+
+$('city').textContent = CITIES[0].city;
+render(0, 0);
+showPhoto(0);
+
+// Intro: a blank sheet until the first map has drawn, then the montage runs to Tbilisi
+// while the sheet fades away; scrolling waits for it.
+(async () => {
+  locked = true;
+  if (document.hidden)                 // opened in a background tab: play it when it is seen
+    await new Promise(r => document.addEventListener('visibilitychange', r, { once: true }));
+  await Promise.race([new Promise(r => maps[0].once('idle', r)), wait(2500)]);
+  await wait(300);
+  $('cover').classList.add('gone');
+  await montage(TB, 1);
+  locked = false;
+})();
+</script>
+</body>
+</html>
