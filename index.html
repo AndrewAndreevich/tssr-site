@@ -72,6 +72,7 @@
     transition:opacity .5s ease 1s; }   /* on leaving, fade only after the scan has blown away */
   body.full.scan-ready .ph .scan { opacity:1; transition:opacity .6s ease .3s; cursor:grab; touch-action:none; }
   body.full.scan-ready .ph .scan:active { cursor:grabbing; }
+  body.full .ph { user-select:none; -webkit-user-select:none; }   /* dragging the scan must not select the caption */
   /* Scan loading: a thin line on the photo panel's edge against the map, filling top to bottom. */
   .load { position:absolute; left:0; top:0; bottom:0; width:3px; z-index:5; pointer-events:none;
     background:rgba(22,19,15,.25); transition:opacity .6s ease; }
@@ -348,14 +349,14 @@ function showPins(active) {            // active: index of the current place, -1
 }
 
 function showPhoto(active) {
-  [...$('photos').children].forEach((el, k) => {
+  $('photos').querySelectorAll('.ph').forEach((el, k) => {
     el.classList.toggle('on', k === active);
     el.classList.toggle('past', k < active);
   });
 }
 
 // Last place's caption: the place itself, or the scan spot in focus. Text fades out, swaps, fades in.
-const lastCap = () => $('photos').lastElementChild.querySelector('figcaption');
+const lastCap = () => $('photos').querySelector('.ph:last-of-type figcaption');
 let capKey = -1, capTimer;
 function scanCaption(k) {
   if (k === capKey) return;
@@ -480,7 +481,15 @@ loadEl.innerHTML = '<i></i>';
 document.getElementById('photos').append(loadEl);
 let shown = 0;
 const progress = p => loadEl.style.setProperty('--p', (shown = Math.min(1, p)).toFixed(3));
+// The file is kept in the browser's Cache Storage, so a second visit reads it from the phone instead
+// of downloading 38 MB again (HTTP caching alone does not hold a file this big on iOS). Bump
+// SCAN_VERSION whenever build.sh makes a new file.
+const SCAN_VERSION = 'brush15k-3m';
 async function download(url) {
+  const key = `${url}?v=${SCAN_VERSION}`;
+  const cache = await window.caches?.open('tssr-scan').catch(() => null);
+  const hit = await cache?.match(key);
+  if (hit) return hit.arrayBuffer();
   const r = await fetch(url);
   const total = +r.headers.get('content-length') || 0;
   if (!r.body || !total) return r.arrayBuffer();
@@ -495,11 +504,16 @@ async function download(url) {
   const out = new Uint8Array(got);
   let at = 0;
   for (const c of chunks) { out.set(c, at); at += c.length; }
+  if (cache) {
+    for (const old of await cache.keys()) if (!old.url.endsWith(key)) cache.delete(old);
+    cache.put(key, new Response(new Blob([out]))).catch(() => {});
+  }
   return out.buffer;
 }
 
 // lod: Spark builds a level-of-detail tree in a worker and each frame draws only a budget of splats
 // (1.5M on iOS, 2.5M on desktop) picked for the view: what is on screen, coarser with distance.
+const heights = fetch('assets/splats/rustaveli_heights.bin').then(r => r.arrayBuffer()).then(b => new Uint8Array(b)).catch(() => null);
 const city = new SplatMesh({ fileBytes: await download('assets/splats/rustaveli.sog'), fileName: 'rustaveli.sog', lod: true });
 progress(.6);
 const creep = setInterval(() => progress(shown + (.97 - shown) * .05), 200);
@@ -658,8 +672,8 @@ function effects(t, k, dt) {
 const aim = center.clone(), dir = new THREE.Vector3(), tmp = new THREE.Vector3();
 let camAz = START.az, camEl = START.el, camD = START.d, camFov = START.fov, focal = 1, shownAt = -1e9, lastW = 0, lastH = 0;
 
-// Dragging the scan orbits the camera round the spot in focus (mouse: both ways; touch: sideways
-// only, so vertical swipes still change slides). The offset stays after release and eases back
+// Dragging the scan orbits the camera round the spot in focus. On touch a gesture that starts up or
+// down is a swipe to the next slide; one that starts sideways orbits both ways. The offset stays after release and eases back
 // to zero when the next spot takes the focus.
 const UP = new THREE.Vector3(0, 1, 0), side = new THREE.Vector3(), off = new THREE.Vector3();
 let yaw = 0, pitch = 0, yawTo = 0, pitchTo = 0, heldTo = 0, swayT = 0, dragK = -1, drag = null;
@@ -675,13 +689,27 @@ canvas.addEventListener('pointermove', e => {
   if (drag.touch && !drag.moved && Math.abs(dy) > Math.abs(dx)) { drag = null; return; }   // a swipe
   drag.moved = drag.moved || Math.abs(dx) + Math.abs(dy) > 4;
   if (drag.touch && drag.moved) window.scanDragged = true;   // tells the swipe handler to stand down
-  yawTo = THREE.MathUtils.clamp(yawTo - dx * .006, -1.3, 1.3);
-  if (!drag.touch) pitchTo = THREE.MathUtils.clamp(pitchTo + dy * .004, -.15, .5);   // drag down: look from above
+  // Only so far round: beyond about 30° from each view the drone never flew and the scan is haze.
+  // The overview hangs low between roofs, so it turns less still.
+  const yawMax = (window.scanFocus ?? 0) === 0 ? .3 : .5;
+  yawTo = THREE.MathUtils.clamp(yawTo - dx * .006, -yawMax, yawMax);
+  pitchTo = THREE.MathUtils.clamp(pitchTo + dy * .004, -.1, .35);   // drag down: look from above
   drag.x = e.clientX; drag.y = e.clientY;
 });
 const endDrag = () => { drag = null; };
 canvas.addEventListener('pointerup', endDrag);
 canvas.addEventListener('pointercancel', endDrag);
+// Roof-height grid (1 byte per 2 m cell over x, y in [-3, 3] of the scan frame; see heights.py).
+const H = await heights, HN = 300, HR = 3;
+let floorY = -9;
+function floorAt(x, z) {                 // world x, z -> highest roof round there (world y); -9: none
+  if (!H) return -9;
+  const i = Math.floor((x + HR) / (2 * HR) * HN), j = Math.floor((-z + HR) / (2 * HR) * HN);
+  let top = 0;
+  for (let b = j - 1; b <= j + 1; b++) for (let a = i - 1; a <= i + 1; a++)
+    if (a >= 0 && a < HN && b >= 0 && b < HN) top = Math.max(top, H[b * HN + a]);
+  return top ? -1 + top * .01 : -9;
+}
 function place(t, k, dt) {
   const w = canvas.clientWidth, h = canvas.clientHeight;
   if (w !== lastW || h !== lastH) {
@@ -717,6 +745,12 @@ function place(t, k, dt) {
   // In flight the camera rises over the roofs and settles into the next view only as it arrives,
   // so it never cuts through the scan between two low views. At rest this is zero.
   camera.position.y += aim.distanceTo(target) * .6 + Math.abs(camD - v.d) * .3;
+  // Never inside the scan: stay a few metres above the roofs under the camera (tools/splat/heights.py).
+  // The floor is capped at the view's own height, so a low view such as the overview keeps its place.
+  const restY = aim.y + dir.y * camD;
+  const fl = floorAt(camera.position.x, camera.position.z);
+  floorY += (fl - floorY) * (fl > floorY ? 1 : 1 - Math.exp(-dt * .004));   // rises at once, sinks slowly
+  camera.position.y = Math.max(camera.position.y, Math.min(floorY + .05, restY));
   camera.lookAt(aim);
   camera.updateMatrixWorld();          // the dots are projected before render: use this frame's camera
   focal += (camera.position.distanceTo(target) - focal) * ease;

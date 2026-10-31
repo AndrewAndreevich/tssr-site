@@ -14,4 +14,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 $ST -q -w "$SRC" -N -H 0 -V opacity,gt,0.005 --decimate-adaptive "$KEEP" "$TMP/pruned.ply"
 # -m: Morton order (better compression and streaming locality), then SOG
 $ST -q -w "$TMP/pruned.ply" -m "$OUT"
-ls -l "$OUT"
+# roof-height grid the page keeps its camera above (needs Python 3 + numpy)
+python "$(dirname "$0")/heights.py" "$TMP/pruned.ply" "${OUT%.sog}_heights.bin"
+ls -l "$OUT" "${OUT%.sog}_heights.bin"
+echo "New file: bump SCAN_VERSION in index.html so visitors drop their cached copy."
