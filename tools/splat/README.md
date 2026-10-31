@@ -1,31 +1,35 @@
 # Rustaveli scan (last slide)
 
-`assets/splats/rustaveli.sog` is the drone survey SCA-102 (Rustaveli Square, Tbilisi), trained with
-gsplat 1.5.3 (MCMC, antialiased) from 300 RealityScan cameras, and shown with Spark 2.4.0.
+`assets/splats/rustaveli.sog` is the drone survey SCA-102 of Rustaveli Square, Tbilisi. It was trained with Brush 0.3.0 for 15k steps on 300 RealityScan cameras and is shown with Spark 2.4.0.
 
 ## Rebuild
 
 ```bash
-tools/splat/build.sh                                   # default: point_cloud_6999.ply (7k steps)
-tools/splat/build.sh F:/BASE/SCANS/SCA-102_RUSTAVELI_WIDE_SITE/SPLAT/gsplat_full/ply/point_cloud_29999.ply
-KEEP=2500000 tools/splat/build.sh ...                   # more splats: ~11.5 bytes each
+tools/splat/build.sh                                   # default: EXPORT_brush_15k/rustaveli_splat_brush_15k.ply
+tools/splat/build.sh F:/BASE/SCANS/SCA-102_RUSTAVELI_WIDE_SITE/SPLAT/brush_out/export_30000.ply
+KEEP=4000000 tools/splat/build.sh ...                   # more splats: ~12.7 bytes each
 ```
 
-The 7k source is 5,000,000 splats at 1.18 GB. The build:
-- removes NaNs and the view-dependent SH bands (colour only);
-- removes about 5k stray splats more than 1000 units out;
-- removes splats with opacity ≤ 0.005;
-- decimates adaptively to 2,000,000;
-- writes Morton-ordered SOG at about 23.5 MB.
+The 15k source has 6,000,000 splats with SH degree 3 and weighs 1.42 GB. The build does four things:
+- removes the view-dependent SH bands and keeps colour only;
+- removes splats with opacity of 0.005 or less;
+- decimates adaptively to 3,000,000 splats;
+- writes a Morton-ordered SOG of about 38 MB.
 
-This runs in about 1.5 minutes. The output stays under the 100 MB limit for a single GitHub Pages file, so no Git LFS is needed.
+It takes about a minute. One file is under the 100 MB GitHub Pages limit, so Git LFS is not needed.
 
 ## Coordinates
 
-The scan stays in gsplat's normalized world space: z is up, and 1 unit is about 110 m. The page turns it to y-up with `rotation.x = -π/2`.
+The SOG keeps the PLY's raw RealityScan/COLMAP frame: −y up, about 1.1 m per unit.
 
-The six places in `VIEWS` (in `index.html`) are in that space. They were placed by laying the OSM building outlines over a top view of the scan:
-- east/north metres → scan x/y: rotate by 73°, scale by 1/111, then offset by the Rustaveli monument at (-0.669, -0.165).
-- Other OSM points can be placed the same way.
+The page works in gsplat's normalized frame of the same COLMAP cameras: z up, 1 unit ≈ 110 m. Two transforms connect them:
+- `NORM` in `index.html` maps raw to normalized. It is gsplat 1.5.3's `similarity_from_cameras` → `align_principal_axes` → z-flip, computed from `SPLAT/colmap/sparse/0`. It is a similarity with no mirror; 1 normalized unit = 98 raw units.
+- After that, the page turns it y-up with a −90° turn about x.
 
-A 30k-step retrain from the same COLMAP model uses the same normalization, so the places and camera views stay valid.
+Any export trained on that COLMAP model drops in without code changes, such as Brush 30k or gsplat.
+
+The camera views and the six places (`OVERVIEW` and `VIEWS`) are in normalized coordinates. They were placed by laying OSM building outlines over a top view of the scan. To place a geographic point:
+1. Convert it to east/north metres from the Rustaveli monument.
+2. Rotate by 73°.
+3. Scale by 1/111.
+4. Add the monument's position, (-0.669, -0.165).
