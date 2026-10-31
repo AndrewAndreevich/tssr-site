@@ -429,24 +429,32 @@ const lo = new THREE.Vector3(pct('x', .05), pct('y', .05), pct('z', .05));
 const hi = new THREE.Vector3(pct('x', .95), pct('y', .95), pct('z', .95));
 const center = lo.clone().add(hi).multiplyScalar(.5), size = hi.clone().sub(lo);
 
-// Five random spots on the facade that faces the camera (+z), kept apart from each other.
+// Five random spots around the house, one per 60° sector from the front (+z) round to 240°, each
+// on the outer shell of its sector; in this order the camera orbits the house. The scan has
+// no usable views beyond 240° (the side facing away from the drone), so the orbit stops there.
 let seed = 19;
 const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-const facade = pts.filter(o => o.a > .6 && o.p.z > center.z + size.z * .1
-  && o.p.x > lo.x + size.x * .1 && o.p.x < hi.x - size.x * .1
-  && o.p.y > lo.y + size.y * .15 && o.p.y < hi.y - size.y * .1);
-const spots = [];
-for (let n = 0; spots.length < 5 && n < 5000; n++) {
-  const p = facade[Math.floor(rand() * facade.length)].p;
-  if (spots.every(s => s.distanceTo(p) > size.x * .22)) spots.push(p);
+const azOf = p => Math.atan2(p.x - center.x, p.z - center.z);
+const radOf = p => Math.hypot(p.x - center.x, p.z - center.z);
+const body = pts.filter(o => o.a > .6 && o.p.y > lo.y + size.y * .2 && o.p.y < hi.y - size.y * .1
+  && radOf(o.p) < Math.max(size.x, size.z) * .5);
+const spots = [], spotAz = [];
+for (let j = 0; j < 5; j++) {
+  const mid = j * Math.PI / 3 + (rand() - .5) * .4;
+  const sector = body.filter(o => Math.abs(Math.atan2(Math.sin(azOf(o.p) - mid), Math.cos(azOf(o.p) - mid))) < .3);
+  const r = sector.map(o => radOf(o.p)).sort((a, b) => a - b);
+  const shell = sector.filter(o => radOf(o.p) >= r[Math.floor(r.length * .75)]);
+  const p = shell[Math.floor(rand() * shell.length)].p;
+  spots.push(p);
+  spotAz.push(mid);                      // unwrapped, rising: the lap always goes the same way
 }
-spots.sort((a, b) => a.x - b.x);
 spotsEl.innerHTML = spots.map(() => '<div class="spot"><i></i></div>').join('');
 const spotEls = [...spotsEl.children];
 
-// Camera: a slow sway around the house; each spot pulls the aim and the focus plane onto it.
+// Camera: orbits the house. Each spot swings it round to that spot's side, pulls the aim
+// towards it and puts the focus plane on it; in between it drifts slowly.
 const aim = center.clone(), want = new THREE.Vector3(), tmp = new THREE.Vector3();
-let focal = 6, shownAt = -1e9, lastW = 0, lastH = 0;
+let focal = 6, camAz = 0, shownAt = -1e9, lastW = 0, lastH = 0;
 function place(t, k, dt) {
   const w = canvas.clientWidth, h = canvas.clientHeight;
   if (w !== lastW || h !== lastH) {
@@ -458,15 +466,17 @@ function place(t, k, dt) {
     lastW = w; lastH = h;
   }
   const hfov = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect);
-  const dist = Math.max(size.x * (w > h ? .8 : .55) / Math.tan(hfov / 2), size.y * 1.1 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
-  const az = Math.sin(t * .00012) * .35 + (k >= 0 ? (k / 4 - .5) * .3 : 0);
+  const span = Math.max(size.x, size.z);
+  const dist = Math.max(span * (w > h ? .8 : .55) / Math.tan(hfov / 2), size.y * 1.1 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
   const target = k >= 0 ? spots[k] : center;
-  want.copy(center).lerp(target, .4);
+  camAz += ((k >= 0 ? spotAz[k] : 0) - camAz) * (1 - Math.exp(-dt * .0016));
+  const az = camAz + Math.sin(t * .00012) * .15;
+  want.copy(center).lerp(target, .35);
   const ease = 1 - Math.exp(-dt * .0025);
   aim.lerp(want, ease);
-  camera.position.set(aim.x + Math.sin(az) * dist * (k >= 0 ? .9 : 1),
-    center.y + size.y * .2 + Math.sin(t * .0002) * size.y * .05,
-    aim.z + Math.cos(az) * dist * (k >= 0 ? .9 : 1));
+  camera.position.set(center.x + Math.sin(az) * dist,
+    center.y + size.y * .35 + Math.sin(t * .0002) * size.y * .05,
+    center.z + Math.cos(az) * dist);
   camera.lookAt(aim);
   focal += (camera.position.distanceTo(target) - focal) * ease;
   spark.focalDistance = focal;
@@ -474,9 +484,12 @@ function place(t, k, dt) {
 }
 
 function drawSpots(k) {
+  const cx = camera.position.x - center.x, cz = camera.position.z - center.z;
   spotEls.forEach((el, j) => {
-    tmp.copy(spots[j]).project(camera);
-    const vis = tmp.z < 1 && Math.abs(tmp.x) < 1.1 && Math.abs(tmp.y) < 1.1;
+    const p = spots[j];
+    const front = (p.x - center.x) * cx + (p.z - center.z) * cz > 0;   // far side: hidden by the house
+    tmp.copy(p).project(camera);
+    const vis = front && tmp.z < 1 && Math.abs(tmp.x) < 1.1 && Math.abs(tmp.y) < 1.1;
     el.style.display = vis ? '' : 'none';
     el.style.transform = `translate(${(tmp.x + 1) / 2 * lastW}px, ${(1 - tmp.y) / 2 * lastH}px)`;
     el.classList.toggle('active', j === k);
