@@ -72,6 +72,13 @@
     transition:opacity .5s ease 1s; }   /* on leaving, fade only after the scan has blown away */
   body.full.scan-ready .ph .scan { opacity:1; transition:opacity .6s ease .3s; cursor:grab; touch-action:none; }
   body.full.scan-ready .ph .scan:active { cursor:grabbing; }
+  /* Scan loading: a thin line on the photo panel's edge against the map, filling top to bottom. */
+  .load { position:absolute; left:0; top:0; bottom:0; width:3px; z-index:5; pointer-events:none;
+    background:rgba(22,19,15,.25); transition:opacity .6s ease; }
+  .load i { position:absolute; inset:0; background:var(--accent); transform-origin:top; transform:scaleY(var(--p, 0));
+    transition:transform .3s linear; }
+  .load.done { opacity:0; transition-delay:1s; }
+  body.full .load { opacity:0; transition-delay:0s; }
   .spots { position:absolute; inset:0; pointer-events:none; opacity:0; transition:opacity .6s ease; }
   body.full.scan-ready .spots { opacity:1; transition-delay:1.2s; }
   .spot { position:absolute; left:0; top:0; width:0; height:0; }
@@ -122,6 +129,8 @@
     .photos { top:50%; width:100%; transform:translateY(100%); }
     body.split .photos { transform:translateY(0); }
     body.full .photos { top:0; }
+    .load { right:0; bottom:auto; width:auto; height:3px; }
+    .load i { transform-origin:left; transform:scaleX(var(--p, 0)); }
     /* Phone full screen: show the photo at full width; a blurred copy extends it above and below. */
     .ph img { inset:auto; top:50%; left:0; height:auto; min-height:100%; transform:translateY(-50%);
       transition:min-height 1.1s var(--ease); }
@@ -447,39 +456,53 @@ showPhoto(0);
 </script>
 <script type="module">
 // Gaussian-splat scan for the last place: our drone survey of Rustaveli Square (SCA-102, Brush),
-// built with tools/splat/build.sh. The file downloads as soon as the page opens; the heavy steps are
-// spread over the three slides before it (decode, set-up, warm-up frame), each once that slide
-// has settled, so none of them stalls a transition. It only draws while on screen.
+// built with tools/splat/build.sh. It downloads and decodes as soon as the page opens, while the
+// visitor scrolls the slides before it. It only draws while on screen.
 import * as THREE from 'three';
 import { SparkRenderer, SplatMesh, dyno } from '@sparkjsdev/spark';
 
 const canvas = document.getElementById('scan'), spotsEl = document.getElementById('spots');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
 const touch = matchMedia('(pointer: coarse)').matches;
-renderer.setPixelRatio(Math.min(devicePixelRatio, touch ? 1.15 : 1.5));   // phones: splats are fill-bound
+renderer.setPixelRatio(Math.min(devicePixelRatio, touch ? 1 : 1.35));   // phones: splats are fill-bound
 renderer.setClearColor(0x1b1814);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(50, 1, 0.01, 500);
 const spark = new SparkRenderer({ renderer, apertureAngle: 0, focalDistance: 1 });
 scene.add(spark);
 
-const FULL = window.SCAN_FULL;
-const bytes = fetch('assets/splats/rustaveli.sog').then(r => r.arrayBuffer());
-const reach = n => new Promise(r => {
-  const f = () => { if ((window.scanStep ?? 0) >= n) { removeEventListener('scanstep', f); r(); } };
-  addEventListener('scanstep', f); f();
-});
-const idle = () => new Promise(r => (window.requestIdleCallback || setTimeout)(r, { timeout: 500 }));
-async function stage(n) {                // wait for slide n; if the visitor stops there, let it settle
-  await reach(n);
-  if (window.scanStep === n) await new Promise(r => setTimeout(r, 1100));
-  await idle();
+// Loading starts with the page and runs while the visitor scrolls. A thin line on the edge of the
+// photo panel (where it meets the map) fills as it goes: the download to 60 %, then decoding and
+// the level-of-detail tree, which report nothing, so the line creeps on towards the end meanwhile.
+const loadEl = document.createElement('div');
+loadEl.className = 'load';
+loadEl.innerHTML = '<i></i>';
+document.getElementById('photos').append(loadEl);
+let shown = 0;
+const progress = p => loadEl.style.setProperty('--p', (shown = Math.min(1, p)).toFixed(3));
+async function download(url) {
+  const r = await fetch(url);
+  const total = +r.headers.get('content-length') || 0;
+  if (!r.body || !total) return r.arrayBuffer();
+  const reader = r.body.getReader(), chunks = [];
+  let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value); got += value.length;
+    progress(.6 * got / total);
+  }
+  const out = new Uint8Array(got);
+  let at = 0;
+  for (const c of chunks) { out.set(c, at); at += c.length; }
+  return out.buffer;
 }
 
-await stage(FULL - 3);
 // lod: Spark builds a level-of-detail tree in a worker and each frame draws only a budget of splats
 // (1.5M on iOS, 2.5M on desktop) picked for the view: what is on screen, coarser with distance.
-const city = new SplatMesh({ fileBytes: await bytes, fileName: 'rustaveli.sog', lod: true });
+const city = new SplatMesh({ fileBytes: await download('assets/splats/rustaveli.sog'), fileName: 'rustaveli.sog', lod: true });
+progress(.6);
+const creep = setInterval(() => progress(shown + (.97 - shown) * .05), 200);
 // The file is in the raw RealityScan/COLMAP frame (−y up, about 1.1 m per unit). Everything below is
 // in gsplat's normalized frame of the same cameras (z up, 1 unit ≈ 110 m): NORM maps raw to that
 // (see tools/splat/README.md), then a quarter turn makes it y-up.
@@ -493,8 +516,9 @@ city.matrix.makeRotationX(-Math.PI / 2).multiply(NORM);
 scene.add(city);
 await city.initialized;
 city.updateMatrixWorld();
-
-await stage(FULL - 2);
+clearInterval(creep);
+progress(1);
+loadEl.classList.add('done');
 
 // The places in scan coordinates (z up, 1 unit ≈ 110 m), placed by laying the OSM building
 // outlines over a top view of the scan, and how the camera sees each: bearing in the scan's x–y
@@ -710,7 +734,6 @@ function drawSpots(k) {
   });
 }
 
-await stage(FULL - 1);
 place(0, -1, 1e6);
 renderer.render(scene, camera);        // warm-up: compile shaders and sort before it is seen
 document.body.classList.add('scan-ready');
