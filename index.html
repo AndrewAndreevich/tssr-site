@@ -446,10 +446,10 @@ showPhoto(0);
 } }
 </script>
 <script type="module">
-// Gaussian-splat scan for the last place. The file downloads as soon as the page opens; the
-// heavy steps are spread over the three slides before it (decode, measure, warm-up frame), each
-// once that slide has settled, so none of them stalls a transition. It only draws while on screen.
-// Scan: "Bergstrasse 19a" by J0N45, huggingface.co/J0N45/Gaussian-Splats.
+// Gaussian-splat scan for the last place: our drone survey of Rustaveli Square (SCA-102), built
+// with tools/splat/build.sh. The file downloads as soon as the page opens; the heavy steps are
+// spread over the three slides before it (decode, set-up, warm-up frame), each once that slide
+// has settled, so none of them stalls a transition. It only draws while on screen.
 import * as THREE from 'three';
 import { SparkRenderer, SplatMesh, dyno } from '@sparkjsdev/spark';
 
@@ -458,12 +458,12 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
 renderer.setClearColor(0x1b1814);
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 200);
-const spark = new SparkRenderer({ renderer, apertureAngle: 0, focalDistance: 5 });
+const camera = new THREE.PerspectiveCamera(50, 1, 0.01, 500);
+const spark = new SparkRenderer({ renderer, apertureAngle: 0, focalDistance: 1 });
 scene.add(spark);
 
 const FULL = window.SCAN_FULL;
-const bytes = fetch('assets/splats/house.splat').then(r => r.arrayBuffer());
+const bytes = fetch('assets/splats/rustaveli.sog').then(r => r.arrayBuffer());
 const reach = n => new Promise(r => {
   const f = () => { if ((window.scanStep ?? 0) >= n) { removeEventListener('scanstep', f); r(); } };
   addEventListener('scanstep', f); f();
@@ -476,53 +476,38 @@ async function stage(n) {                // wait for slide n; if the visitor sto
 }
 
 await stage(FULL - 3);
-const house = new SplatMesh({ fileBytes: await bytes, fileName: 'house.splat' });
-house.quaternion.set(1, 0, 0, 0);      // scan is stored upside down
-scene.add(house);
-await house.initialized;
-house.updateMatrixWorld();
+const city = new SplatMesh({ fileBytes: await bytes, fileName: 'rustaveli.sog' });
+city.rotation.x = -Math.PI / 2;          // the scan is z-up
+scene.add(city);
+await city.initialized;
+city.updateMatrixWorld();
 
 await stage(FULL - 2);
 
-// Extent from the splat centres (5–95 %, so stray floaters do not count).
-const pts = [];
-house.packedSplats.forEachSplat((i, c, s, q, opacity) => {
-  if (i % 7 || !isFinite(c.x + c.y + c.z)) return;
-  pts.push({ p: house.localToWorld(c.clone()), a: opacity });
-});
-await idle();                          // second half in a separate task
-const pct = (key, t) => { const v = pts.map(o => o.p[key]).sort((a, b) => a - b); return v[Math.floor(v.length * t)]; };
-const lo = new THREE.Vector3(pct('x', .05), pct('y', .05), pct('z', .05));
-const hi = new THREE.Vector3(pct('x', .95), pct('y', .95), pct('z', .95));
-const center = lo.clone().add(hi).multiplyScalar(.5), size = hi.clone().sub(lo);
-
-// Random spots around the house, one per equal sector from the front (+z) round to 240°, each
-// on the outer shell of its sector; in this order the camera orbits the house. The scan has
-// no usable views beyond 240° (the side facing away from the drone), so the orbit stops there.
-let seed = 19;
-const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-const azOf = p => Math.atan2(p.x - center.x, p.z - center.z);
-const radOf = p => Math.hypot(p.x - center.x, p.z - center.z);
-const body = pts.filter(o => o.a > .6 && o.p.y > lo.y + size.y * .2 && o.p.y < hi.y - size.y * .1
-  && radOf(o.p) < Math.max(size.x, size.z) * .5);
-body.forEach(o => { o.az = azOf(o.p); o.r = radOf(o.p); });
-const spots = [], spotAz = [];
-const names = window.SCAN_SPOTS, n = names.length;
-for (let j = 0; j < n; j++) {
-  const mid = j * (4 * Math.PI / 3) / (n - 1) + (rand() - .5) * .3;
-  const sector = body.filter(o => Math.abs(Math.atan2(Math.sin(o.az - mid), Math.cos(o.az - mid))) < .3);
-  const r = sector.map(o => o.r).sort((a, b) => a - b);
-  const shell = sector.filter(o => o.r >= r[Math.floor(r.length * .75)]);
-  const p = shell[Math.floor(rand() * shell.length)].p;
-  spots.push(p);
-  spotAz.push(mid);                      // unwrapped, rising: the lap always goes the same way
-}
+// The places in scan coordinates (z up, 1 unit ≈ 110 m), placed by laying the OSM building
+// outlines over a top view of the scan, and where the camera looks at each from: bearing in the
+// scan's x–y plane and elevation (degrees), distance. The bearings face the side the drone flew,
+// where the scan is sharp.
+const VIEWS = {
+  'Rustaveli Monument':  { p: [-0.669, -0.165, -0.137], az: 106, el: 40, d: .5 },
+  'Academy of Sciences': { p: [-0.083, 0.004, 0.1], az: 140, el: 30, d: .6 },
+  'Rustaveli Metro':     { p: [-0.36, -0.283, -0.064], az: 140, el: 40, d: .6 },
+  'Muhudo':              { p: [-0.542, -0.501, -0.05], az: 97, el: 45, d: .6 },
+  'Jazz Club 1984':      { p: [-0.003, 0.61, -0.27], az: 125, el: 38, d: .75 },
+  'Avenue Renovation':   { p: [0.33, 0.21, -0.2], az: 96, el: 34, d: .75 },
+};
+const world = ([x, y, z]) => new THREE.Vector3(x, z, -y);
+const rad = v => ({ az: THREE.MathUtils.degToRad(v.az), el: THREE.MathUtils.degToRad(v.el), d: v.d });
+const names = window.SCAN_SPOTS;
+const spots = names.map(s => world(VIEWS[s].p)), views = names.map(s => rad(VIEWS[s]));
+const center = spots.reduce((a, p) => a.add(p), new THREE.Vector3()).divideScalar(spots.length);
+const OVER = rad({ az: 115, el: 50, d: 1.5 });   // before the first spot: the square from above
 spotsEl.innerHTML = names.map(s => `<div class="spot"><i></i><b>${s}</b></div>`).join('');
 const spotEls = [...spotsEl.children];
 
 // Effects, all per splat on the GPU (world space):
-//  reveal  – first show: a sphere grows from the middle of the house, splats swell into place
-//            as it reaches them, glowing at its edge;
+//  reveal  – first show: a sphere grows from the middle of the places, splats swell into place
+//            as it reaches them, glowing at its edge; at the end it races out over the background;
 //  dust    – leaving back to the photos: the scan blows away upwards;
 //  wave    – when a spot takes the focus an (unseen) sphere grows out of it: a bright seam where
 //            it cuts the scan; inside the sphere the scan keeps its colour (up to a radius),
@@ -531,8 +516,8 @@ const U = {
   focus: dyno.dynoVec3(center.clone()), focusAmt: dyno.dynoFloat(0), wave: dyno.dynoFloat(99),
   reveal: dyno.dynoFloat(0), dust: dyno.dynoFloat(0),
 };
-const span = Math.max(size.x, size.z), f = v => v.toFixed(4);
-const WAVE_SPEED = .45;                  // sphere radius growth, house spans per second
+const SPAN = 1.4, f = v => v.toFixed(4);     // across the places, in scan units
+const WAVE_SPEED = .45;                  // sphere radius growth, spans per second
 const fx = new dyno.Dyno({
   inTypes: { gsplat: dyno.Gsplat, focus: 'vec3', focusAmt: 'float', wave: 'float',
     reveal: 'float', dust: 'float' },
@@ -551,26 +536,27 @@ const fx = new dyno.Dyno({
     vec3 sc = ${O.gsplat}.scales;
     float h = fxHash(${O.gsplat}.index);
     const vec3 ACC = vec3(1.0);   // all glows are white; colour is kept only round the spot
-    const float SPAN = ${f(span)};
+    const float SPAN = ${f(SPAN)};
 
     float fd = length(p - ${I.focus});
     float front = ${I.wave} * SPAN * ${f(WAVE_SPEED)};
-    float R = min(front, SPAN * 0.32);
+    float R = min(front, SPAN * 0.22);
     float inside = 1.0 - smoothstep(R * 0.3, R * 1.3, fd);       // colour fades out with distance
     float lum = dot(c, vec3(0.299, 0.587, 0.114));
     c = mix(c, vec3(lum) * 0.85, ${I.focusAmt} * (1.0 - inside));
 
     float ring = (fd - front) / (SPAN * 0.03);
-    float w = exp(-ring * ring) * exp(-${I.wave} * 3.5);          // dies out within ~a third of the house
+    float w = exp(-ring * ring) * exp(-${I.wave} * 3.5);          // dies out within ~a third of a span
     c += ACC * w * 1.4;
     sc *= 1.0 + w * 0.5;
 
     const vec3 MID = vec3(${f(center.x)}, ${f(center.y)}, ${f(center.z)});
-    float rd = length(p - MID) / (SPAN * 0.75);
-    // Distance behind the front in metres (> 0: the sphere has passed). Splats are capped in size
-    // by that distance so none spills over the front, which keeps the edge sharp; a hair-thin
-    // shell of small white splats right on the front draws the line.
-    float edge = ${I.reveal} >= 1.0 ? 1e3 : (${I.reveal} * 1.2 - rd) * SPAN * 0.75;
+    // Distance behind the front (> 0: the sphere has passed). Splats are capped in size by that
+    // distance so none spills over the front, which keeps the edge sharp; a hair-thin shell of
+    // small white splats right on the front draws the line. Past the places the front speeds up
+    // (the pow term) so the hills and the sky are in before it ends.
+    float rev = ${I.reveal};
+    float edge = rev >= 1.0 ? 1e3 : rev * SPAN * 0.9 + pow(rev, 6.0) * 40.0 - length(p - MID);
     const float LW = SPAN * 0.004;
     float line = exp(-pow(edge / LW, 2.0));
     if (edge < 1e3) {
@@ -581,7 +567,7 @@ const fx = new dyno.Dyno({
     }
 
     float d = clamp(${I.dust} * 2.0 - h, 0.0, 1.0);
-    p += vec3(sin(h * 41.0) * 0.6 + 0.8, 1.6, cos(h * 73.0) * 0.6) * d * d * ${f(size.y * .7)};
+    p += vec3(sin(h * 41.0) * 0.6 + 0.8, 1.6, cos(h * 73.0) * 0.6) * d * d * 0.35;
     sc *= 1.0 - d * 0.75;
     a *= 1.0 - d;
 
@@ -589,9 +575,9 @@ const fx = new dyno.Dyno({
     ${O.gsplat}.scales = sc;
     ${O.gsplat}.rgba = vec4(clamp(c, 0.0, 1.0), a);   // packed as 8-bit: overflow would wrap`.trim().split('\n'),
 });
-house.worldModifier = dyno.dynoBlock({ gsplat: dyno.Gsplat }, { gsplat: dyno.Gsplat },
+city.worldModifier = dyno.dynoBlock({ gsplat: dyno.Gsplat }, { gsplat: dyno.Gsplat },
   ({ gsplat }) => ({ gsplat: fx.apply({ gsplat, ...U }).gsplat }));
-house.updateGenerator();
+city.updateGenerator();
 
 // Effect clocks, driven from the scroll position (k = spot in focus, -1 = not on the scan).
 let fxK = -1, enterAt = -1e9, leaveAt = -1e9, spotAt = -1e9;
@@ -609,18 +595,18 @@ function effects(t, k, dt) {
   U.wave.value = Math.min(99, s(t - spotAt));
   // After the reveal the colour drains from the outside in over about a second.
   U.focusAmt.value += ((k >= 0 && t - enterAt > 3000 ? 1 : 0) - U.focusAmt.value) * (1 - Math.exp(-dt * .0015));
-  house.updateVersion();
+  city.updateVersion();
 }
 
-// Camera: orbits the house. Each spot swings it round to that spot's side, pulls the aim
-// towards it and puts the focus plane on it; in between it drifts slowly.
-const aim = center.clone(), want = new THREE.Vector3(), tmp = new THREE.Vector3();
-let focal = 6, camAz = 0, shownAt = -1e9, lastW = 0, lastH = 0;
+// Camera: flies from place to place, each seen from its own side and height; in between it
+// drifts slowly. The focus plane follows the place.
+const aim = center.clone(), dir = new THREE.Vector3(), tmp = new THREE.Vector3();
+let camAz = OVER.az, camEl = OVER.el, camD = OVER.d, focal = 1, shownAt = -1e9, lastW = 0, lastH = 0;
 
 // Dragging the scan orbits the camera round the spot in focus (mouse: both ways; touch: sideways
 // only, so vertical swipes still change slides). The offset stays after release and eases back
 // to zero when the next spot takes the focus.
-const UP = new THREE.Vector3(0, 1, 0), side = new THREE.Vector3(), off = new THREE.Vector3(), look = new THREE.Vector3();
+const UP = new THREE.Vector3(0, 1, 0), side = new THREE.Vector3(), off = new THREE.Vector3();
 let yaw = 0, pitch = 0, yawTo = 0, pitchTo = 0, heldTo = 0, swayT = 0, dragK = -1, drag = null;
 canvas.addEventListener('pointerdown', e => {
   if ((window.scanFocus ?? -1) < 0) return;
@@ -646,49 +632,40 @@ function place(t, k, dt) {
   if (w !== lastW || h !== lastH) {
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
-    // Wide screens: nudge the house right so the caption on the left does not cover it.
+    // Wide screens: nudge the picture right so the caption on the left does not cover it.
     if (w > h) camera.setViewOffset(w, h, -w * .12, 0, w, h); else camera.clearViewOffset();
     camera.updateProjectionMatrix();
     lastW = w; lastH = h;
   }
-  const hfov = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect);
-  const span = Math.max(size.x, size.z);
-  const dist = Math.max(span * (w > h ? .8 : .55) / Math.tan(hfov / 2), size.y * 1.1 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
-  const target = k >= 0 ? spots[k] : center;
+  const v = k >= 0 ? views[k] : OVER, target = k >= 0 ? spots[k] : center;
   if (k !== dragK) { yawTo = pitchTo = 0; heldTo = 0; dragK = k; }
   // Once the visitor takes the camera the drift and bob stop, so nothing but the drag moves the view.
   if (!heldTo) swayT += dt;            // the drift's clock stops (without a jump) while held
-  camAz += ((k >= 0 ? spotAz[k] : 0) - camAz) * (1 - Math.exp(-dt * .0016));
-  const az = camAz + Math.sin(swayT * .00012) * .15;
-  want.copy(center).lerp(target, .35);
-  const ease = 1 - Math.exp(-dt * .0025);
-  aim.lerp(want, ease);
-  camera.position.set(center.x + Math.sin(az) * dist,
-    center.y + size.y * .35 + Math.sin(swayT * .0002) * size.y * .05,
-    center.z + Math.cos(az) * dist);
+  const ease = 1 - Math.exp(-dt * .0016);
+  camAz += Math.atan2(Math.sin(v.az - camAz), Math.cos(v.az - camAz)) * ease;   // the short way round
+  camEl += (v.el - camEl) * ease;
+  camD += (v.d * (w > h ? 1 : 1.35) - camD) * ease;   // portrait: step back to keep the context
+  aim.lerp(target, ease);
+  const az = camAz + Math.sin(swayT * .00012) * .1, el = camEl + Math.sin(swayT * .0002) * .03;
+  dir.set(Math.cos(el) * Math.cos(az), Math.sin(el), -Math.cos(el) * Math.sin(az));
   const ue = 1 - Math.exp(-dt * .012);
   yaw += (yawTo - yaw) * ue; pitch += (pitchTo - pitch) * ue;
-  // Orbit: turn the camera and its line of sight together round the spot, so the spot keeps its
-  // place on screen and the picture turns round it.
-  off.copy(camera.position).sub(target).applyAxisAngle(UP, yaw);
+  // Orbit: turn the camera round the spot it looks at, so the spot keeps its place on screen.
+  off.copy(dir).multiplyScalar(camD).applyAxisAngle(UP, yaw);
   side.crossVectors(off, UP).normalize();
   off.applyAxisAngle(side, pitch);
-  look.copy(aim).sub(target).applyAxisAngle(UP, yaw).applyAxisAngle(side, pitch).add(target);
-  camera.position.copy(target).add(off);
-  camera.lookAt(look);
+  camera.position.copy(aim).add(off);
+  camera.lookAt(aim);
   camera.updateMatrixWorld();          // the dots are projected before render: use this frame's camera
   focal += (camera.position.distanceTo(target) - focal) * ease;
   spark.focalDistance = focal;
-  spark.apertureAngle = k >= 0 ? .025 : 0;
+  spark.apertureAngle = k >= 0 ? .02 : 0;
 }
 
 function drawSpots(k) {
-  const cx = camera.position.x - center.x, cz = camera.position.z - center.z;
   spotEls.forEach((el, j) => {
-    const p = spots[j];
-    const front = (p.x - center.x) * cx + (p.z - center.z) * cz > 0;   // far side: hidden by the house
-    tmp.copy(p).project(camera);
-    const vis = front && tmp.z < 1 && Math.abs(tmp.x) < 1.1 && Math.abs(tmp.y) < 1.1;
+    tmp.copy(spots[j]).project(camera);
+    const vis = tmp.z < 1 && Math.abs(tmp.x) < 1.1 && Math.abs(tmp.y) < 1.1;
     el.style.display = vis ? '' : 'none';
     el.style.transform = `translate(${(tmp.x + 1) / 2 * lastW}px, ${(1 - tmp.y) / 2 * lastH}px)`;
     el.classList.toggle('active', j === k);
