@@ -67,10 +67,11 @@
     line-height:1; transition:font-size 1.1s var(--ease); }
   .ph p { margin:12px 0 0; max-width:440px; font-size:14px; line-height:1.55; opacity:.85; }
   /* Last place: a Gaussian-splat scan loads in the background and replaces the photo when it
-     goes full screen; five spots on the scan take the focus in turn as you scroll. */
+     goes full screen; spots on the scan take the focus in turn as you scroll, each with its own caption. */
   .ph .scan { position:absolute; inset:0; width:100%; height:100%; display:block; opacity:0;
-    transition:opacity 1.2s ease; }
-  body.full.scan-ready .ph .scan { opacity:1; transition-delay:.4s; }
+    transition:opacity .5s ease 1s; }   /* on leaving, fade only after the scan has blown away */
+  body.full.scan-ready .ph .scan { opacity:1; transition:opacity .6s ease .3s; cursor:grab; touch-action:none; }
+  body.full.scan-ready .ph .scan:active { cursor:grabbing; }
   .spots { position:absolute; inset:0; pointer-events:none; opacity:0; transition:opacity .6s ease; }
   body.full.scan-ready .spots { opacity:1; transition-delay:1.2s; }
   .spot { position:absolute; left:0; top:0; width:0; height:0; }
@@ -79,6 +80,12 @@
     transition:transform .5s ease, background .4s ease, opacity .4s ease; }
   .spot.active i { background:var(--accent); transform:scale(1.25); opacity:1;
     box-shadow:0 0 0 6px rgba(168,65,42,.25); }
+  .spot b { position:absolute; left:16px; top:-9px; white-space:nowrap; font-size:12px; font-weight:500;
+    letter-spacing:.08em; text-transform:uppercase; color:#fff; text-shadow:0 1px 6px rgba(0,0,0,.6);
+    opacity:0; transform:translateX(-6px); transition:opacity .4s ease, transform .4s ease; }
+  .spot.active b { opacity:1; transform:none; transition-delay:.3s; }
+  .ph figcaption > * { transition:opacity .35s ease; }
+  .ph figcaption.out > * { opacity:0; }
   body.full .ph figcaption { padding:160px 64px 64px; }
   body.full .ph h2 { font-size:clamp(48px, 7vw, 110px); }
 
@@ -179,10 +186,28 @@ const PLACES = [
     text:'The research centre in the heart of the city, next to the Academy of Sciences on Rustaveli.' },
 ];
 
+// Around the research centre: one per scan spot; the caption switches to it as the camera turns.
+const AROUND = [
+  { name:'Rustaveli Monument', where:'Rustaveli Square',
+    text:'Shota Rustaveli in bronze, 1942 — the poet who gave the avenue, the square and the metro their name.' },
+  { name:'Academy of Sciences', where:'Rustaveli Ave. 52',
+    text:'The Georgian National Academy of Sciences in its 1950s tower, our neighbour across the street.' },
+  { name:'Rustaveli Metro', where:'Rustaveli Square',
+    text:'One of the first stations of the Tbilisi metro, opened in 1966, with its long escalator down.' },
+  { name:'Muhudo', where:'Zandukeli St. 2',
+    text:'A small falafel place behind the metro — lunch for half the research centre.' },
+  { name:'Jazz Club 1984', where:'Rustaveli Ave. 37',
+    text:'Live jazz every evening in an old building on the avenue.' },
+  { name:'Avenue Renovation', where:'Rustaveli Avenue',
+    text:'Pavements, trees and façades of the old boulevard being remade, block by block.' },
+];
+
 // The montage plays by itself on load and lands on Tbilisi.
 // Steps: 0 Tbilisi · places · last place full screen as a 3D scan, one step per scan spot.
-const SPOTS = 5;
+const SPOTS = AROUND.length;
+window.SCAN_SPOTS = AROUND.map(a => a.name);
 const FIRST_PLACE = 1, FULL = FIRST_PLACE + PLACES.length, TOTAL = FULL + SPOTS;
+window.SCAN_FULL = FULL;
 
 const $ = id => document.getElementById(id);
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -320,11 +345,34 @@ function showPhoto(active) {
   });
 }
 
+// Last place's caption: the place itself, or the scan spot in focus. Text fades out, swaps, fades in.
+const lastCap = () => $('photos').lastElementChild.querySelector('figcaption');
+let capKey = -1, capTimer;
+function scanCaption(k) {
+  if (k === capKey) return;
+  capKey = k;
+  const p = PLACES[PLACES.length - 1], a = AROUND[k];
+  const kicker = a ? `${String(k + 1).padStart(2, '0')} / ${String(AROUND.length).padStart(2, '0')} · ${a.where}`
+    : `${String(PLACES.length).padStart(2, '0')} / ${String(PLACES.length).padStart(2, '0')} · ${p.where}`;
+  const cap = lastCap();
+  cap.classList.add('out');
+  clearTimeout(capTimer);
+  capTimer = setTimeout(() => {
+    cap.querySelector('.kicker').textContent = kicker;
+    cap.querySelector('h2').textContent = a ? a.name : p.name;
+    cap.querySelector('p').textContent = a ? a.text : p.text;
+    cap.classList.remove('out');
+  }, 350);
+}
+
 function render(i, dir) {
+  scanCaption(i >= FULL ? i - FULL : -1);
   document.body.classList.toggle('chapter', i >= FIRST_PLACE);
   document.body.classList.toggle('split', i >= FIRST_PLACE);
   document.body.classList.toggle('full', i >= FULL);
   window.scanFocus = i >= FULL ? i - FULL : -1;   // read by the scan module every frame
+  window.scanStep = i;                             // the scan module stages its loading on this
+  window.dispatchEvent(new Event('scanstep'));
   $('idx').textContent = String(i + 1).padStart(2, '0');
   [...$('dots').children].forEach((d, k) => d.classList.toggle('on', k === i));
 
@@ -365,6 +413,7 @@ window.addEventListener('keydown', e => {
 let touchY = null;
 window.addEventListener('touchstart', e => touchY = e.touches[0].clientY, { passive: true });
 window.addEventListener('touchend', e => {
+  if (window.scanDragged) { window.scanDragged = false; touchY = null; return; }   // was orbiting the scan
   if (touchY === null) return;
   const dy = touchY - e.changedTouches[0].clientY;
   if (Math.abs(dy) > 40) go(Math.sign(dy));
@@ -397,11 +446,12 @@ showPhoto(0);
 } }
 </script>
 <script type="module">
-// Gaussian-splat scan for the last place. It starts loading as soon as the page opens, renders
-// one warm-up frame when ready and then only draws while the full-screen slide is on.
+// Gaussian-splat scan for the last place. The file downloads as soon as the page opens; the
+// heavy steps are spread over the three slides before it (decode, measure, warm-up frame), each
+// once that slide has settled, so none of them stalls a transition. It only draws while on screen.
 // Scan: "Bergstrasse 19a" by J0N45, huggingface.co/J0N45/Gaussian-Splats.
 import * as THREE from 'three';
-import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
+import { SparkRenderer, SplatMesh, dyno } from '@sparkjsdev/spark';
 
 const canvas = document.getElementById('scan'), spotsEl = document.getElementById('spots');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
@@ -412,11 +462,27 @@ const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 200);
 const spark = new SparkRenderer({ renderer, apertureAngle: 0, focalDistance: 5 });
 scene.add(spark);
 
-const house = new SplatMesh({ url: 'assets/splats/house.splat' });
+const FULL = window.SCAN_FULL;
+const bytes = fetch('assets/splats/house.splat').then(r => r.arrayBuffer());
+const reach = n => new Promise(r => {
+  const f = () => { if ((window.scanStep ?? 0) >= n) { removeEventListener('scanstep', f); r(); } };
+  addEventListener('scanstep', f); f();
+});
+const idle = () => new Promise(r => (window.requestIdleCallback || setTimeout)(r, { timeout: 500 }));
+async function stage(n) {                // wait for slide n; if the visitor stops there, let it settle
+  await reach(n);
+  if (window.scanStep === n) await new Promise(r => setTimeout(r, 1100));
+  await idle();
+}
+
+await stage(FULL - 3);
+const house = new SplatMesh({ fileBytes: await bytes, fileName: 'house.splat' });
 house.quaternion.set(1, 0, 0, 0);      // scan is stored upside down
 scene.add(house);
 await house.initialized;
 house.updateMatrixWorld();
+
+await stage(FULL - 2);
 
 // Extent from the splat centres (5–95 %, so stray floaters do not count).
 const pts = [];
@@ -424,12 +490,13 @@ house.packedSplats.forEachSplat((i, c, s, q, opacity) => {
   if (i % 7 || !isFinite(c.x + c.y + c.z)) return;
   pts.push({ p: house.localToWorld(c.clone()), a: opacity });
 });
+await idle();                          // second half in a separate task
 const pct = (key, t) => { const v = pts.map(o => o.p[key]).sort((a, b) => a - b); return v[Math.floor(v.length * t)]; };
 const lo = new THREE.Vector3(pct('x', .05), pct('y', .05), pct('z', .05));
 const hi = new THREE.Vector3(pct('x', .95), pct('y', .95), pct('z', .95));
 const center = lo.clone().add(hi).multiplyScalar(.5), size = hi.clone().sub(lo);
 
-// Five random spots around the house, one per 60° sector from the front (+z) round to 240°, each
+// Random spots around the house, one per equal sector from the front (+z) round to 240°, each
 // on the outer shell of its sector; in this order the camera orbits the house. The scan has
 // no usable views beyond 240° (the side facing away from the drone), so the orbit stops there.
 let seed = 19;
@@ -438,23 +505,142 @@ const azOf = p => Math.atan2(p.x - center.x, p.z - center.z);
 const radOf = p => Math.hypot(p.x - center.x, p.z - center.z);
 const body = pts.filter(o => o.a > .6 && o.p.y > lo.y + size.y * .2 && o.p.y < hi.y - size.y * .1
   && radOf(o.p) < Math.max(size.x, size.z) * .5);
+body.forEach(o => { o.az = azOf(o.p); o.r = radOf(o.p); });
 const spots = [], spotAz = [];
-for (let j = 0; j < 5; j++) {
-  const mid = j * Math.PI / 3 + (rand() - .5) * .4;
-  const sector = body.filter(o => Math.abs(Math.atan2(Math.sin(azOf(o.p) - mid), Math.cos(azOf(o.p) - mid))) < .3);
-  const r = sector.map(o => radOf(o.p)).sort((a, b) => a - b);
-  const shell = sector.filter(o => radOf(o.p) >= r[Math.floor(r.length * .75)]);
+const names = window.SCAN_SPOTS, n = names.length;
+for (let j = 0; j < n; j++) {
+  const mid = j * (4 * Math.PI / 3) / (n - 1) + (rand() - .5) * .3;
+  const sector = body.filter(o => Math.abs(Math.atan2(Math.sin(o.az - mid), Math.cos(o.az - mid))) < .3);
+  const r = sector.map(o => o.r).sort((a, b) => a - b);
+  const shell = sector.filter(o => o.r >= r[Math.floor(r.length * .75)]);
   const p = shell[Math.floor(rand() * shell.length)].p;
   spots.push(p);
   spotAz.push(mid);                      // unwrapped, rising: the lap always goes the same way
 }
-spotsEl.innerHTML = spots.map(() => '<div class="spot"><i></i></div>').join('');
+spotsEl.innerHTML = names.map(s => `<div class="spot"><i></i><b>${s}</b></div>`).join('');
 const spotEls = [...spotsEl.children];
+
+// Effects, all per splat on the GPU (world space):
+//  reveal  – first show: a sphere grows from the middle of the house, splats swell into place
+//            as it reaches them, glowing at its edge;
+//  dust    – leaving back to the photos: the scan blows away upwards;
+//  wave    – when a spot takes the focus an (unseen) sphere grows out of it: a bright seam where
+//            it cuts the scan; inside the sphere the scan keeps its colour (up to a radius),
+//            outside it the scan is black and white.
+const U = {
+  focus: dyno.dynoVec3(center.clone()), focusAmt: dyno.dynoFloat(0), wave: dyno.dynoFloat(99),
+  reveal: dyno.dynoFloat(0), dust: dyno.dynoFloat(0),
+};
+const span = Math.max(size.x, size.z), f = v => v.toFixed(4);
+const WAVE_SPEED = .45;                  // sphere radius growth, house spans per second
+const fx = new dyno.Dyno({
+  inTypes: { gsplat: dyno.Gsplat, focus: 'vec3', focusAmt: 'float', wave: 'float',
+    reveal: 'float', dust: 'float' },
+  outTypes: { gsplat: dyno.Gsplat },
+  globals: () => [`
+    float fxHash(int i) {
+      uint x = uint(i);
+      x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16;
+      return float(x) / 4294967295.0;
+    }`],
+  statements: ({ inputs: I, outputs: O }) => `
+    ${O.gsplat} = ${I.gsplat};
+    vec3 p = ${O.gsplat}.center;
+    vec3 c = ${O.gsplat}.rgba.rgb;
+    float a = ${O.gsplat}.rgba.a;
+    vec3 sc = ${O.gsplat}.scales;
+    float h = fxHash(${O.gsplat}.index);
+    const vec3 ACC = vec3(1.0);   // all glows are white; colour is kept only round the spot
+    const float SPAN = ${f(span)};
+
+    float fd = length(p - ${I.focus});
+    float front = ${I.wave} * SPAN * ${f(WAVE_SPEED)};
+    float R = min(front, SPAN * 0.32);
+    float inside = 1.0 - smoothstep(R * 0.3, R * 1.3, fd);       // colour fades out with distance
+    float lum = dot(c, vec3(0.299, 0.587, 0.114));
+    c = mix(c, vec3(lum) * 0.85, ${I.focusAmt} * (1.0 - inside));
+
+    float ring = (fd - front) / (SPAN * 0.03);
+    float w = exp(-ring * ring) * exp(-${I.wave} * 3.5);          // dies out within ~a third of the house
+    c += ACC * w * 1.4;
+    sc *= 1.0 + w * 0.5;
+
+    const vec3 MID = vec3(${f(center.x)}, ${f(center.y)}, ${f(center.z)});
+    float rd = length(p - MID) / (SPAN * 0.75);
+    // Distance behind the front in metres (> 0: the sphere has passed). Splats are capped in size
+    // by that distance so none spills over the front, which keeps the edge sharp; a hair-thin
+    // shell of small white splats right on the front draws the line.
+    float edge = ${I.reveal} >= 1.0 ? 1e3 : (${I.reveal} * 1.2 - rd) * SPAN * 0.75;
+    const float LW = SPAN * 0.004;
+    float line = exp(-pow(edge / LW, 2.0));
+    if (edge < 1e3) {
+      sc = edge > 0.0 ? min(sc, vec3(edge * 0.4)) : vec3(0.0);
+      sc = max(sc, vec3(LW * line));
+      c = mix(c, ACC, line);
+      a = max(a * step(0.0, edge), line);
+    }
+
+    float d = clamp(${I.dust} * 2.0 - h, 0.0, 1.0);
+    p += vec3(sin(h * 41.0) * 0.6 + 0.8, 1.6, cos(h * 73.0) * 0.6) * d * d * ${f(size.y * .7)};
+    sc *= 1.0 - d * 0.75;
+    a *= 1.0 - d;
+
+    ${O.gsplat}.center = p;
+    ${O.gsplat}.scales = sc;
+    ${O.gsplat}.rgba = vec4(clamp(c, 0.0, 1.0), a);   // packed as 8-bit: overflow would wrap`.trim().split('\n'),
+});
+house.worldModifier = dyno.dynoBlock({ gsplat: dyno.Gsplat }, { gsplat: dyno.Gsplat },
+  ({ gsplat }) => ({ gsplat: fx.apply({ gsplat, ...U }).gsplat }));
+house.updateGenerator();
+
+// Effect clocks, driven from the scroll position (k = spot in focus, -1 = not on the scan).
+let fxK = -1, enterAt = -1e9, leaveAt = -1e9, spotAt = -1e9;
+function effects(t, k, dt) {
+  if (k !== fxK) {
+    if (fxK < 0 && k >= 0) { enterAt = t; spotAt = -1e9; }   // first spot: no wave, the reveal is enough
+    else if (k < 0) leaveAt = t;
+    else spotAt = t;
+    if (k >= 0) U.focus.value.copy(spots[k]);
+    fxK = k;
+  }
+  const s = ms => Math.max(0, ms) / 1000;
+  U.reveal.value = k >= 0 ? Math.min(1, s(t - enterAt - 400) / 2.6) : U.reveal.value;
+  U.dust.value = k < 0 ? Math.min(1, s(t - leaveAt) / 1.3) : 0;
+  U.wave.value = Math.min(99, s(t - spotAt));
+  // After the reveal the colour drains from the outside in over about a second.
+  U.focusAmt.value += ((k >= 0 && t - enterAt > 3000 ? 1 : 0) - U.focusAmt.value) * (1 - Math.exp(-dt * .0015));
+  house.updateVersion();
+}
 
 // Camera: orbits the house. Each spot swings it round to that spot's side, pulls the aim
 // towards it and puts the focus plane on it; in between it drifts slowly.
 const aim = center.clone(), want = new THREE.Vector3(), tmp = new THREE.Vector3();
 let focal = 6, camAz = 0, shownAt = -1e9, lastW = 0, lastH = 0;
+
+// Dragging the scan orbits the camera round the spot in focus (mouse: both ways; touch: sideways
+// only, so vertical swipes still change slides). The offset stays after release and eases back
+// to zero when the next spot takes the focus.
+const UP = new THREE.Vector3(0, 1, 0), side = new THREE.Vector3(), off = new THREE.Vector3(), look = new THREE.Vector3();
+let yaw = 0, pitch = 0, yawTo = 0, pitchTo = 0, heldTo = 0, swayT = 0, dragK = -1, drag = null;
+canvas.addEventListener('pointerdown', e => {
+  if ((window.scanFocus ?? -1) < 0) return;
+  heldTo = 1;
+  drag = { x: e.clientX, y: e.clientY, touch: e.pointerType === 'touch', moved: false };
+  canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  if (drag.touch && !drag.moved && Math.abs(dy) > Math.abs(dx)) { drag = null; return; }   // a swipe
+  drag.moved = drag.moved || Math.abs(dx) + Math.abs(dy) > 4;
+  if (drag.touch && drag.moved) window.scanDragged = true;   // tells the swipe handler to stand down
+  yawTo = THREE.MathUtils.clamp(yawTo - dx * .006, -1.3, 1.3);
+  if (!drag.touch) pitchTo = THREE.MathUtils.clamp(pitchTo + dy * .004, -.35, .5);   // drag down: look from above
+  drag.x = e.clientX; drag.y = e.clientY;
+});
+const endDrag = () => { drag = null; };
+canvas.addEventListener('pointerup', endDrag);
+canvas.addEventListener('pointercancel', endDrag);
 function place(t, k, dt) {
   const w = canvas.clientWidth, h = canvas.clientHeight;
   if (w !== lastW || h !== lastH) {
@@ -469,15 +655,28 @@ function place(t, k, dt) {
   const span = Math.max(size.x, size.z);
   const dist = Math.max(span * (w > h ? .8 : .55) / Math.tan(hfov / 2), size.y * 1.1 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
   const target = k >= 0 ? spots[k] : center;
+  if (k !== dragK) { yawTo = pitchTo = 0; heldTo = 0; dragK = k; }
+  // Once the visitor takes the camera the drift and bob stop, so nothing but the drag moves the view.
+  if (!heldTo) swayT += dt;            // the drift's clock stops (without a jump) while held
   camAz += ((k >= 0 ? spotAz[k] : 0) - camAz) * (1 - Math.exp(-dt * .0016));
-  const az = camAz + Math.sin(t * .00012) * .15;
+  const az = camAz + Math.sin(swayT * .00012) * .15;
   want.copy(center).lerp(target, .35);
   const ease = 1 - Math.exp(-dt * .0025);
   aim.lerp(want, ease);
   camera.position.set(center.x + Math.sin(az) * dist,
-    center.y + size.y * .35 + Math.sin(t * .0002) * size.y * .05,
+    center.y + size.y * .35 + Math.sin(swayT * .0002) * size.y * .05,
     center.z + Math.cos(az) * dist);
-  camera.lookAt(aim);
+  const ue = 1 - Math.exp(-dt * .012);
+  yaw += (yawTo - yaw) * ue; pitch += (pitchTo - pitch) * ue;
+  // Orbit: turn the camera and its line of sight together round the spot, so the spot keeps its
+  // place on screen and the picture turns round it.
+  off.copy(camera.position).sub(target).applyAxisAngle(UP, yaw);
+  side.crossVectors(off, UP).normalize();
+  off.applyAxisAngle(side, pitch);
+  look.copy(aim).sub(target).applyAxisAngle(UP, yaw).applyAxisAngle(side, pitch).add(target);
+  camera.position.copy(target).add(off);
+  camera.lookAt(look);
+  camera.updateMatrixWorld();          // the dots are projected before render: use this frame's camera
   focal += (camera.position.distanceTo(target) - focal) * ease;
   spark.focalDistance = focal;
   spark.apertureAngle = k >= 0 ? .025 : 0;
@@ -496,6 +695,7 @@ function drawSpots(k) {
   });
 }
 
+await stage(FULL - 1);
 place(0, -1, 1e6);
 renderer.render(scene, camera);        // warm-up: compile shaders and sort before it is seen
 document.body.classList.add('scan-ready');
@@ -507,6 +707,7 @@ renderer.setAnimationLoop(t => {
   if (k >= 0) shownAt = t;
   if (t - shownAt > 1500) return;      // off screen: keep the GPU idle
   place(t, k, dt);
+  effects(t, k, dt);
   drawSpots(k);
   renderer.render(scene, camera);
 });
