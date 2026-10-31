@@ -455,7 +455,8 @@ import { SparkRenderer, SplatMesh, dyno } from '@sparkjsdev/spark';
 
 const canvas = document.getElementById('scan'), spotsEl = document.getElementById('spots');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+const touch = matchMedia('(pointer: coarse)').matches;
+renderer.setPixelRatio(Math.min(devicePixelRatio, touch ? 1.15 : 1.5));   // phones: splats are fill-bound
 renderer.setClearColor(0x1b1814);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(50, 1, 0.01, 500);
@@ -476,7 +477,9 @@ async function stage(n) {                // wait for slide n; if the visitor sto
 }
 
 await stage(FULL - 3);
-const city = new SplatMesh({ fileBytes: await bytes, fileName: 'rustaveli.sog' });
+// lod: Spark builds a level-of-detail tree in a worker and each frame draws only a budget of splats
+// (1.5M on iOS, 2.5M on desktop) picked for the view: what is on screen, coarser with distance.
+const city = new SplatMesh({ fileBytes: await bytes, fileName: 'rustaveli.sog', lod: true });
 // The file is in the raw RealityScan/COLMAP frame (−y up, about 1.1 m per unit). Everything below is
 // in gsplat's normalized frame of the same cameras (z up, 1 unit ≈ 110 m): NORM maps raw to that
 // (see tools/splat/README.md), then a quarter turn makes it y-up.
@@ -505,19 +508,24 @@ const OVERVIEW = { p: [-0.134, -0.055, 0.081], az: 119.4, el: -27, d: 1.4, fov: 
 const VIEWS = {
   'Rustaveli Monument':  { p: [-0.669, -0.165, -0.137], az: 150, el: 10, d: 1.6, fov: 16 },   // against the metro dome
   'Academy of Sciences': { p: [-0.083, 0.004, 0.1], az: 150, el: 14, d: 1.6, fov: 28 },
-  'Rustaveli Metro':     { p: [-0.36, -0.283, -0.064], az: 130, el: 16, d: 1.5, fov: 24 },
+  'Rustaveli Metro':     { p: [-1.017, -0.253, -0.15], az: 12, el: 35, d: 1.1, fov: 30 },    // the round entrance behind the monument, from the Academy side
   'Muhudo':              { p: [-0.542, -0.501, -0.05], az: 100, el: 22, d: 1.4, fov: 24 },
-  'Jazz Club 1984':      { p: [-0.003, 0.61, -0.27], az: 125, el: 28, d: 1.5, fov: 24 },
-  'Avenue Renovation':   { p: [0.33, 0.21, -0.2], az: 100, el: 28, d: 1.5, fov: 26 },
+  'Jazz Club 1984':      { p: [0.073, 0.587, -0.33], az: 10, el: 32, d: 1.4, fov: 26 },     // its avenue front
+  'Avenue Renovation':   { p: [-0.33, 0.18, -0.25], az: 170, el: 28, d: 1.4, fov: 28 },   // the dug-up pavement at the ring
 };
 const world = ([x, y, z]) => new THREE.Vector3(x, z, -y);
+const U_EYE = new THREE.Vector3();
 const rad = v => ({ az: THREE.MathUtils.degToRad(v.az), el: THREE.MathUtils.degToRad(v.el), d: v.d, fov: v.fov });
 const names = window.SCAN_SPOTS;
 const spots = names.map(s => world(VIEWS[s].p));
 // Camera stops, one per scroll step: 0 the overview, then the spots.
 const targets = [world(OVERVIEW.p), ...spots], views = [rad(OVERVIEW), ...names.map(s => rad(VIEWS[s]))];
 const center = world([-0.4, -0.1, -0.2]);           // the square: the reveal grows from here
-const START = { ...views[0], d: views[0].d * 1.4 };   // before the scan shows: further back, so it flies in
+const START = views[0];
+{ // where the overview camera stands (without its drift): splats round it are dropped, see below
+  const { az, el, d } = views[0];
+  U_EYE.copy(targets[0]).add(new THREE.Vector3(Math.cos(el) * Math.cos(az), Math.sin(el), -Math.cos(el) * Math.sin(az)).multiplyScalar(d));
+}   // before the scan shows: further back, so it flies in
 spotsEl.innerHTML = names.map(s => `<div class="spot"><i></i><b>${s}</b></div>`).join('');
 const spotEls = [...spotsEl.children];
 
@@ -530,7 +538,7 @@ const spotEls = [...spotsEl.children];
 //            outside it the scan is black and white.
 const U = {
   focus: dyno.dynoVec3(center.clone()), focusAmt: dyno.dynoFloat(0), wave: dyno.dynoFloat(99),
-  reveal: dyno.dynoFloat(0), dust: dyno.dynoFloat(0), eye: dyno.dynoVec3(new THREE.Vector3()), cut: dyno.dynoFloat(0),
+  reveal: dyno.dynoFloat(0), dust: dyno.dynoFloat(0), eye: dyno.dynoVec3(U_EYE), cut: dyno.dynoFloat(0),
 };
 const SPAN = 1.4, f = v => v.toFixed(4);     // across the places, in scan units
 const WAVE_SPEED = .45;                  // sphere radius growth, spans per second
@@ -599,7 +607,7 @@ city.worldModifier = dyno.dynoBlock({ gsplat: dyno.Gsplat }, { gsplat: dyno.Gspl
 city.updateGenerator();
 
 // Effect clocks, driven from the scroll position (k = spot in focus, -1 = not on the scan).
-let fxK = -1, enterAt = -1e9, leaveAt = -1e9, spotAt = -1e9;
+let fxK = -1, enterAt = -1e9, leaveAt = -1e9, spotAt = -1e9, lastSig = '';
 function effects(t, k, dt) {
   if (k !== fxK) {
     if (fxK < 0 && k >= 0) { enterAt = t; spotAt = -1e9; }   // first spot: no wave, the reveal is enough
@@ -612,11 +620,13 @@ function effects(t, k, dt) {
   U.reveal.value = k >= 0 ? Math.min(1, s(t - enterAt - 400) / 2.6) : U.reveal.value;
   U.dust.value = k < 0 ? Math.min(1, s(t - leaveAt) / 1.3) : 0;
   U.wave.value = Math.min(99, s(t - spotAt));
-  U.eye.value.copy(camera.position);
   U.cut.value = k === 0 ? .35 : U.cut.value * Math.exp(-dt * .003);   // on at once, off gently
   // After the reveal the colour drains from the outside in over about a second (not on the overview).
   U.focusAmt.value += ((k > 0 && t - enterAt > 3000 ? 1 : 0) - U.focusAmt.value) * (1 - Math.exp(-dt * .0015));
-  city.updateVersion();
+  // Re-run the per-splat effects only while something animates; a still scan costs nothing extra.
+  const sig = [U.reveal.value, U.dust.value, U.focusAmt.value.toFixed(3), U.wave.value < 3 ? U.wave.value : 3,
+    U.cut.value.toFixed(3), k].join();
+  if (sig !== lastSig) { lastSig = sig; city.updateVersion(); }
 }
 
 // Camera: starts on the overview, then flies from place to place, each seen from its own side,
@@ -642,7 +652,7 @@ canvas.addEventListener('pointermove', e => {
   drag.moved = drag.moved || Math.abs(dx) + Math.abs(dy) > 4;
   if (drag.touch && drag.moved) window.scanDragged = true;   // tells the swipe handler to stand down
   yawTo = THREE.MathUtils.clamp(yawTo - dx * .006, -1.3, 1.3);
-  if (!drag.touch) pitchTo = THREE.MathUtils.clamp(pitchTo + dy * .004, -.35, .5);   // drag down: look from above
+  if (!drag.touch) pitchTo = THREE.MathUtils.clamp(pitchTo + dy * .004, -.15, .5);   // drag down: look from above
   drag.x = e.clientX; drag.y = e.clientY;
 });
 const endDrag = () => { drag = null; };
@@ -680,6 +690,9 @@ function place(t, k, dt) {
   side.crossVectors(off, UP).normalize();
   off.applyAxisAngle(side, pitch);
   camera.position.copy(aim).add(off);
+  // In flight the camera rises over the roofs and settles into the next view only as it arrives,
+  // so it never cuts through the scan between two low views. At rest this is zero.
+  camera.position.y += aim.distanceTo(target) * .6 + Math.abs(camD - v.d) * .3;
   camera.lookAt(aim);
   camera.updateMatrixWorld();          // the dots are projected before render: use this frame's camera
   focal += (camera.position.distanceTo(target) - focal) * ease;
