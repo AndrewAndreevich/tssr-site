@@ -66,6 +66,19 @@
   .ph h2 { margin:8px 0 0; font-family:'Instrument Serif', serif; font-weight:400; font-size:clamp(32px, 3.6vw, 54px);
     line-height:1; transition:font-size 1.1s var(--ease); }
   .ph p { margin:12px 0 0; max-width:440px; font-size:14px; line-height:1.55; opacity:.85; }
+  /* Last place: a Gaussian-splat scan loads in the background and replaces the photo when it
+     goes full screen; five spots on the scan take the focus in turn as you scroll. */
+  .ph .scan { position:absolute; inset:0; width:100%; height:100%; display:block; opacity:0;
+    transition:opacity 1.2s ease; }
+  body.full.scan-ready .ph .scan { opacity:1; transition-delay:.4s; }
+  .spots { position:absolute; inset:0; pointer-events:none; opacity:0; transition:opacity .6s ease; }
+  body.full.scan-ready .spots { opacity:1; transition-delay:1.2s; }
+  .spot { position:absolute; left:0; top:0; width:0; height:0; }
+  .spot i { position:absolute; left:-6px; top:-6px; width:12px; height:12px; border-radius:50%;
+    background:#fff; box-shadow:0 0 0 1px rgba(0,0,0,.25); transform:scale(.7); opacity:.75;
+    transition:transform .5s ease, background .4s ease, opacity .4s ease; }
+  .spot.active i { background:var(--accent); transform:scale(1.25); opacity:1;
+    box-shadow:0 0 0 6px rgba(168,65,42,.25); }
   body.full .ph figcaption { padding:160px 64px 64px; }
   body.full .ph h2 { font-size:clamp(48px, 7vw, 110px); }
 
@@ -167,8 +180,9 @@ const PLACES = [
 ];
 
 // The montage plays by itself on load and lands on Tbilisi.
-// Steps: 0 Tbilisi · places · last photo full screen.
-const FIRST_PLACE = 1, FULL = FIRST_PLACE + PLACES.length, TOTAL = FULL + 1;
+// Steps: 0 Tbilisi · places · last place full screen as a 3D scan, one step per scan spot.
+const SPOTS = 5;
+const FIRST_PLACE = 1, FULL = FIRST_PLACE + PLACES.length, TOTAL = FULL + SPOTS;
 
 const $ = id => document.getElementById(id);
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -176,6 +190,7 @@ $('total').textContent = String(TOTAL).padStart(2, '0');
 $('dots').innerHTML = Array.from({ length: TOTAL }, () => '<i></i>').join('');
 $('photos').innerHTML = PLACES.map((p, i) => `
   <figure class="ph"><div class="bg" style="background-image:url(${p.img})"></div><img src="${p.img}" alt="${p.name}">
+    ${i === PLACES.length - 1 ? '<canvas class="scan" id="scan"></canvas><div class="spots" id="spots"></div>' : ''}
     <figcaption><div class="kicker">${String(i + 1).padStart(2, '0')} / ${String(PLACES.length).padStart(2, '0')} · ${p.where}</div>
       <h2>${p.name}</h2><p>${p.text}</p></figcaption></figure>`).join('');
 
@@ -308,7 +323,8 @@ function showPhoto(active) {
 function render(i, dir) {
   document.body.classList.toggle('chapter', i >= FIRST_PLACE);
   document.body.classList.toggle('split', i >= FIRST_PLACE);
-  document.body.classList.toggle('full', i === FULL);
+  document.body.classList.toggle('full', i >= FULL);
+  window.scanFocus = i >= FULL ? i - FULL : -1;   // read by the scan module every frame
   $('idx').textContent = String(i + 1).padStart(2, '0');
   [...$('dots').children].forEach((d, k) => d.classList.toggle('on', k === i));
 
@@ -371,6 +387,116 @@ showPhoto(0);
   await montage(TB, 1);
   locked = false;
 })();
+</script>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/",
+  "@sparkjsdev/spark": "https://cdn.jsdelivr.net/npm/@sparkjsdev/spark@2.4.0/dist/spark.module.js"
+} }
+</script>
+<script type="module">
+// Gaussian-splat scan for the last place. It starts loading as soon as the page opens, renders
+// one warm-up frame when ready and then only draws while the full-screen slide is on.
+// Scan: "Bergstrasse 19a" by J0N45, huggingface.co/J0N45/Gaussian-Splats.
+import * as THREE from 'three';
+import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
+
+const canvas = document.getElementById('scan'), spotsEl = document.getElementById('spots');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+renderer.setClearColor(0x1b1814);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 200);
+const spark = new SparkRenderer({ renderer, apertureAngle: 0, focalDistance: 5 });
+scene.add(spark);
+
+const house = new SplatMesh({ url: 'assets/splats/house.splat' });
+house.quaternion.set(1, 0, 0, 0);      // scan is stored upside down
+scene.add(house);
+await house.initialized;
+house.updateMatrixWorld();
+
+// Extent from the splat centres (5–95 %, so stray floaters do not count).
+const pts = [];
+house.packedSplats.forEachSplat((i, c, s, q, opacity) => {
+  if (i % 7 || !isFinite(c.x + c.y + c.z)) return;
+  pts.push({ p: house.localToWorld(c.clone()), a: opacity });
+});
+const pct = (key, t) => { const v = pts.map(o => o.p[key]).sort((a, b) => a - b); return v[Math.floor(v.length * t)]; };
+const lo = new THREE.Vector3(pct('x', .05), pct('y', .05), pct('z', .05));
+const hi = new THREE.Vector3(pct('x', .95), pct('y', .95), pct('z', .95));
+const center = lo.clone().add(hi).multiplyScalar(.5), size = hi.clone().sub(lo);
+
+// Five random spots on the facade that faces the camera (+z), kept apart from each other.
+let seed = 19;
+const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+const facade = pts.filter(o => o.a > .6 && o.p.z > center.z + size.z * .1
+  && o.p.x > lo.x + size.x * .1 && o.p.x < hi.x - size.x * .1
+  && o.p.y > lo.y + size.y * .15 && o.p.y < hi.y - size.y * .1);
+const spots = [];
+for (let n = 0; spots.length < 5 && n < 5000; n++) {
+  const p = facade[Math.floor(rand() * facade.length)].p;
+  if (spots.every(s => s.distanceTo(p) > size.x * .22)) spots.push(p);
+}
+spots.sort((a, b) => a.x - b.x);
+spotsEl.innerHTML = spots.map(() => '<div class="spot"><i></i></div>').join('');
+const spotEls = [...spotsEl.children];
+
+// Camera: a slow sway around the house; each spot pulls the aim and the focus plane onto it.
+const aim = center.clone(), want = new THREE.Vector3(), tmp = new THREE.Vector3();
+let focal = 6, shownAt = -1e9, lastW = 0, lastH = 0;
+function place(t, k, dt) {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (w !== lastW || h !== lastH) {
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    // Wide screens: nudge the house right so the caption on the left does not cover it.
+    if (w > h) camera.setViewOffset(w, h, -w * .12, 0, w, h); else camera.clearViewOffset();
+    camera.updateProjectionMatrix();
+    lastW = w; lastH = h;
+  }
+  const hfov = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect);
+  const dist = Math.max(size.x * (w > h ? .8 : .55) / Math.tan(hfov / 2), size.y * 1.1 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
+  const az = Math.sin(t * .00012) * .35 + (k >= 0 ? (k / 4 - .5) * .3 : 0);
+  const target = k >= 0 ? spots[k] : center;
+  want.copy(center).lerp(target, .4);
+  const ease = 1 - Math.exp(-dt * .0025);
+  aim.lerp(want, ease);
+  camera.position.set(aim.x + Math.sin(az) * dist * (k >= 0 ? .9 : 1),
+    center.y + size.y * .2 + Math.sin(t * .0002) * size.y * .05,
+    aim.z + Math.cos(az) * dist * (k >= 0 ? .9 : 1));
+  camera.lookAt(aim);
+  focal += (camera.position.distanceTo(target) - focal) * ease;
+  spark.focalDistance = focal;
+  spark.apertureAngle = k >= 0 ? .025 : 0;
+}
+
+function drawSpots(k) {
+  spotEls.forEach((el, j) => {
+    tmp.copy(spots[j]).project(camera);
+    const vis = tmp.z < 1 && Math.abs(tmp.x) < 1.1 && Math.abs(tmp.y) < 1.1;
+    el.style.display = vis ? '' : 'none';
+    el.style.transform = `translate(${(tmp.x + 1) / 2 * lastW}px, ${(1 - tmp.y) / 2 * lastH}px)`;
+    el.classList.toggle('active', j === k);
+  });
+}
+
+place(0, -1, 1e6);
+renderer.render(scene, camera);        // warm-up: compile shaders and sort before it is seen
+document.body.classList.add('scan-ready');
+
+let prev = performance.now();
+renderer.setAnimationLoop(t => {
+  const dt = Math.min(t - prev, 100); prev = t;
+  const k = window.scanFocus ?? -1;
+  if (k >= 0) shownAt = t;
+  if (t - shownAt > 1500) return;      // off screen: keep the GPU idle
+  place(t, k, dt);
+  drawSpots(k);
+  renderer.render(scene, camera);
+});
 </script>
 </body>
 </html>
