@@ -7,16 +7,17 @@
 ```bash
 tools/splat/build.sh                                   # default: EXPORT_brush_15k/rustaveli_splat_brush_15k.ply
 tools/splat/build.sh F:/BASE/SCANS/SCA-102_RUSTAVELI_WIDE_SITE/SPLAT/brush_out/export_30000.ply
-KEEP=4000000 tools/splat/build.sh ...                   # more splats: ~12.7 bytes each
+KEEP=4000000 KEEP_MOBILE=2000000 tools/splat/build.sh ...   # more splats: ~12.7 bytes each
 ```
 
-The 15k source has 6,000,000 splats with SH degree 3 and weighs 1.42 GB. The build does four things:
+The 15k source has 6,000,000 splats with SH degree 3 and weighs 1.42 GB. The build:
 - removes the view-dependent SH bands and keeps colour only;
 - removes splats with opacity of 0.005 or less;
 - decimates adaptively to 3,000,000 splats;
-- writes a Morton-ordered SOG of about 38 MB.
+- writes a Morton-ordered SOG of about 38 MB for computers, and the same at 1.5M splats (about 19 MB) for phones — iOS Safari reloads the tab when the big file and its level-of-detail tree do not fit in memory;
+- writes `rustaveli_heights.bin`, a roof-height grid the camera stays above (`heights.py`).
 
-It takes about a minute. One file is under the 100 MB GitHub Pages limit, so Git LFS is not needed.
+It takes about four minutes. After a rebuild, bump `SCAN_VERSION` in `index.html` so visitors drop the copy cached in their browser. One file is under the 100 MB GitHub Pages limit, so Git LFS is not needed.
 
 ## Coordinates
 

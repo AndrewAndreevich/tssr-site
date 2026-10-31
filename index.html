@@ -481,40 +481,45 @@ loadEl.innerHTML = '<i></i>';
 document.getElementById('photos').append(loadEl);
 let shown = 0;
 const progress = p => loadEl.style.setProperty('--p', (shown = Math.min(1, p)).toFixed(3));
-// The file is kept in the browser's Cache Storage, so a second visit reads it from the phone instead
-// of downloading 38 MB again (HTTP caching alone does not hold a file this big on iOS). Bump
-// SCAN_VERSION whenever build.sh makes a new file.
-const SCAN_VERSION = 'brush15k-3m';
+// Phones get a lighter file (1.5M splats, 19 MB) drawn whole; computers the full one (3M, 38 MB)
+// with Spark's level of detail, which builds a tree in a worker and each frame draws only a budget
+// of splats picked for the view. The tree and the full file take more memory than iOS Safari
+// allows a tab, so phones do without both.
+const SCAN = touch ? 'assets/splats/rustaveli_mobile.sog' : 'assets/splats/rustaveli.sog';
+// The file is kept in the browser's Cache Storage, so a second visit reads it from the device instead
+// of downloading it again (HTTP caching alone does not hold a file this big on iOS). It is read into
+// one buffer as it arrives; the cache gets its own copy streamed to disk alongside. Bump
+// SCAN_VERSION whenever build.sh makes new files.
+const SCAN_VERSION = 'brush15k-1';
 async function download(url) {
   const key = `${url}?v=${SCAN_VERSION}`;
   const cache = await window.caches?.open('tssr-scan').catch(() => null);
   const hit = await cache?.match(key);
   if (hit) return hit.arrayBuffer();
   const r = await fetch(url);
+  if (cache) {
+    for (const old of await cache.keys()) if (!old.url.endsWith(key)) cache.delete(old);
+    cache.put(key, r.clone()).catch(() => {});
+  }
   const total = +r.headers.get('content-length') || 0;
   if (!r.body || !total) return r.arrayBuffer();
-  const reader = r.body.getReader(), chunks = [];
-  let got = 0;
+  let out = new Uint8Array(total), got = 0;
+  const reader = r.body.getReader();
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    chunks.push(value); got += value.length;
-    progress(.6 * got / total);
+    if (got + value.length > out.length) {          // the length header was off: grow
+      const more = new Uint8Array(Math.max(out.length * 2, got + value.length));
+      more.set(out.subarray(0, got)); out = more;
+    }
+    out.set(value, got); got += value.length;
+    progress(.6 * Math.min(1, got / total));
   }
-  const out = new Uint8Array(got);
-  let at = 0;
-  for (const c of chunks) { out.set(c, at); at += c.length; }
-  if (cache) {
-    for (const old of await cache.keys()) if (!old.url.endsWith(key)) cache.delete(old);
-    cache.put(key, new Response(new Blob([out]))).catch(() => {});
-  }
-  return out.buffer;
+  return got === out.length ? out.buffer : out.slice(0, got).buffer;
 }
 
-// lod: Spark builds a level-of-detail tree in a worker and each frame draws only a budget of splats
-// (1.5M on iOS, 2.5M on desktop) picked for the view: what is on screen, coarser with distance.
 const heights = fetch('assets/splats/rustaveli_heights.bin').then(r => r.arrayBuffer()).then(b => new Uint8Array(b)).catch(() => null);
-const city = new SplatMesh({ fileBytes: await download('assets/splats/rustaveli.sog'), fileName: 'rustaveli.sog', lod: true });
+const city = new SplatMesh({ fileBytes: await download(SCAN), fileName: SCAN.split('/').pop(), lod: !touch });
 progress(.6);
 const creep = setInterval(() => progress(shown + (.97 - shown) * .05), 200);
 // The file is in the raw RealityScan/COLMAP frame (−y up, about 1.1 m per unit). Everything below is
