@@ -763,12 +763,16 @@ function floorAt(x, z) {                 // world x, z -> highest roof round the
   return top ? -1 + top * .01 : -9;
 }
 // A flight is one fixed curve: bearing, height, distance and aim all ease by the same factor, so the
-// camera is wherever r, the share of the way still to go, puts it (1 leaving, 0 arrived). When a flight
-// starts the curve is checked against the roof grid once, and the lift it needs to clear the roofs is
-// spread smoothly along it: the camera climbs early and evenly, never bumping up at a roof. The last
-// stretch into the view is left out, so a low view such as the overview or TSSR keeps its place.
-const LN = 96, need = new Float32Array(LN + 1), gap = new Float32Array(LN + 1), away = new Float32Array(LN + 1), fly = { az: 0, el: 0, d: 0, aim: new THREE.Vector3(), lift: 0 };
-let flyR = 0;
+// camera is wherever r, the share of the way still to go, puts it (1 leaving, 0 arrived); r falls as
+// exp(-.0016 t). When a flight starts the curve is checked against the roof grid once, in time steps,
+// and the lift it needs to clear the roofs is spread smoothly over time along it: the camera climbs early
+// and evenly, never bumping up at a roof. The lift starts from whatever the camera had (no jump when a
+// flight is cut short by the next) and is gone on the last stretch into the view, so a low view such as
+// the overview or TSSR keeps its place.
+const STEP = 40, LN = 100;                // a sample every 40 ms, 4 s in all
+const need = new Float32Array(LN + 1), gap = new Float32Array(LN + 1), away = new Float32Array(LN + 1);
+const fly = { az: 0, el: 0, d: 0, aim: new THREE.Vector3(), lift: 0 };
+let flyT = 1e9, lastLift = 0;
 function flightAt(r, v, target, out) {   // camera position r of the way back from the view, before the smoothed lift
   const az = v.az - Math.atan2(Math.sin(v.az - fly.az), Math.cos(v.az - fly.az)) * r;
   const el = v.el + (fly.el - v.el) * r, d = v.d + (fly.d - v.d) * r;
@@ -782,19 +786,20 @@ function planFlight(v, target) {
   fly.aim.copy(aim);
   flightAt(0, v, target, rest);
   for (let i = 0; i <= LN; i++) {
-    flightAt(i / LN, v, target, base);
+    flightAt(Math.exp(-.0016 * STEP * i), v, target, base);
     away[i] = THREE.MathUtils.smoothstep(Math.hypot(base.x - rest.x, base.z - rest.z), .02, .07);
     gap[i] = Math.max(0, floorAt(base.x, base.z) + .05 - base.y) * away[i];
   }
-  const D = 8;                            // widen each need over its neighbours, then soften it
-  for (let i = 0; i <= LN; i++) { let m = 0; for (let j = Math.max(0, i - D); j <= Math.min(LN, i + D); j++) m = Math.max(m, gap[j]); need[i] = m; }
-  const top = need.slice();
+  const D = 10;                           // widen each need over 0.4 s either side, then soften it as much
+  const top = new Float32Array(LN + 1);
+  for (let i = 0; i <= LN; i++) for (let j = Math.max(0, i - D); j <= Math.min(LN, i + D); j++) top[i] = Math.max(top[i], gap[j]);
   for (let i = 0; i <= LN; i++) {
     let sum = 0, n = 0;
     for (let j = Math.max(0, i - D); j <= Math.min(LN, i + D); j++) { sum += top[j]; n++; }
-    need[i] = Math.max(sum / n, gap[i]) * away[i];   // and gone by the time the camera is in the view
+    const ramp = THREE.MathUtils.smoothstep(i, 0, 6);    // a quarter second from the lift the camera had
+    need[i] = (sum / n * ramp + lastLift * (1 - ramp)) * away[i];
   }
-  flyR = 1;
+  flyT = 0;
 }
 function place(t, k, dt) {
   const w = canvas.clientWidth, h = canvas.clientHeight;
@@ -832,9 +837,10 @@ function place(t, k, dt) {
   camera.position.copy(aim).add(off);
   // In flight the camera rises over the roofs and settles into the next view only as it arrives,
   // so it never cuts through the scan between two low views (planFlight). At rest this is zero.
-  flyR *= 1 - ease;
-  const x = flyR * LN, i0 = Math.min(LN - 1, Math.floor(x));
-  camera.position.y += aim.distanceTo(target) * .6 + Math.abs(camD - v.d) * .3 + need[i0] + (need[i0 + 1] - need[i0]) * (x - i0);
+  flyT += dt;
+  const x = Math.min(LN, flyT / STEP), i0 = Math.min(LN - 1, Math.floor(x));
+  lastLift = need[i0] + (need[i0 + 1] - need[i0]) * Math.min(1, x - i0);
+  camera.position.y += aim.distanceTo(target) * .6 + Math.abs(camD - v.d) * .3 + lastLift;
   camera.lookAt(aim);
   camera.updateMatrixWorld();          // the dots are projected before render: use this frame's camera
   focal += (camera.position.distanceTo(target) - focal) * ease;
