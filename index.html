@@ -108,7 +108,7 @@
     transition:opacity 1.6s cubic-bezier(.4,0,.2,1); }
   .cover.gone { opacity:0; }
   /* Scan-only mode: the cover is a loading screen in the scan's own dark, with a progress bar. */
-  .cover.boot { background:#1b1814; display:flex; align-items:center; justify-content:center; }
+  .cover.boot { background:#1b1814; display:flex; align-items:center; justify-content:center; transition-duration:.5s; }
   .boot-in { width:min(320px, 70vw); text-align:center; color:rgba(255,255,255,.6); font-size:12px;
     letter-spacing:.12em; text-transform:uppercase; }
   .boot-in h1 { margin:0 0 28px; font-family:'Instrument Serif', serif; font-weight:400; letter-spacing:0;
@@ -464,6 +464,8 @@ else { render(0, 0); showPhoto(0); }
     show(1);
     await wait(400);
     cover.classList.add('gone');
+    await wait(550);
+    cover.remove();                      // its title must not linger over the first captions
     locked = false;
     return;
   }
