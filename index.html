@@ -224,6 +224,8 @@ const AROUND = [
     text:'Live jazz every evening in an old building on the avenue.' },
   { name:'Avenue Renovation', where:'Rustaveli Avenue',
     text:'Pavements, trees and façades of the old boulevard being remade, block by block.' },
+  { name:'TSSR', where:'Rustaveli Avenue',
+    text:'Tbilisi School for Social Research — our house on the square, next door to McDonald’s.' },
 ];
 
 // The montage plays by itself on load and lands on Tbilisi.
@@ -598,6 +600,7 @@ const VIEWS = {
   'Muhudo':              { p: [-0.542, -0.501, -0.05], az: 100, el: 22, d: 1.4, fov: 24 },
   'Jazz Club 1984':      { p: [0.073, 0.587, -0.33], az: 10, el: 32, d: 1.4, fov: 26 },     // its avenue front
   'Avenue Renovation':   { p: [-0.33, 0.18, -0.25], az: 170, el: 28, d: 1.4, fov: 28 },   // the dug-up pavement at the ring
+  'TSSR':                { p: [-0.188, -0.5, 0.08], az: 70, el: -14, d: 0.3, fov: 55 },     // the balcony, from the street below by McDonald's
 };
 const world = ([x, y, z]) => new THREE.Vector3(x, z, -y);
 const U_EYE = new THREE.Vector3();
