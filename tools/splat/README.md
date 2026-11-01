@@ -1,16 +1,15 @@
 # Rustaveli scan (last slide)
 
-`assets/splats/rustaveli.sog` is the drone survey SCA-102 of Rustaveli Square, Tbilisi. It was trained with Brush 0.3.0 for 15k steps on 300 RealityScan cameras and is shown with Spark 2.4.0.
+`assets/splats/rustaveli.sog` is the drone survey SCA-103 of Rustaveli Square, Tbilisi (it replaced SCA-102 on 2026-11-01). It was trained with Brush for 15k steps on 417 RealityScan cameras and is shown with Spark 2.4.0.
 
 ## Rebuild
 
 ```bash
-tools/splat/build.sh                                   # default: EXPORT_brush_15k/rustaveli_splat_brush_15k.ply
-tools/splat/build.sh F:/BASE/SCANS/SCA-102_RUSTAVELI_WIDE_SITE/SPLAT/brush_out/export_30000.ply
+tools/splat/build.sh                                   # default: SCA-103 .../SPLAT/EXPORT/SCA-103_RUSTAVELI_WIDE_2_SITE_splat.ply
 KEEP=4000000 KEEP_MOBILE=2000000 tools/splat/build.sh ...   # more splats: ~12.7 bytes each
 ```
 
-The 15k source has 6,000,000 splats with SH degree 3 and weighs 1.42 GB. The build:
+The 15k source has 6,000,000 splats with SH degree 3 and weighs 1.4 GB. The build:
 - removes the view-dependent SH bands and keeps colour only;
 - removes splats with opacity of 0.005 or less;
 - decimates adaptively to 3,000,000 splats;
@@ -21,15 +20,15 @@ It takes about four minutes. After a rebuild, bump `SCAN_VERSION` in `index.html
 
 ## Coordinates
 
-The SOG keeps the PLY's raw RealityScan/COLMAP frame: −y up, about 1.1 m per unit.
+The SOG keeps the PLY's raw RealityScan/COLMAP frame of SCA-103: −y up, about 0.94 m per unit.
 
-The page works in gsplat's normalized frame of the same COLMAP cameras: z up, 1 unit ≈ 110 m. Two transforms connect them:
-- `NORM` in `index.html` maps raw to normalized. It is gsplat 1.5.3's `similarity_from_cameras` → `align_principal_axes` → z-flip, computed from `SPLAT/colmap/sparse/0`. It is a similarity with no mirror; 1 normalized unit = 98 raw units.
+The page works in a fixed frame inherited from the first scan, SCA-102: gsplat's normalized frame of SCA-102's COLMAP cameras, z up, 1 unit ≈ 98 m. Every view and place was set in it. Two transforms connect the file to it:
+- `NORM` in `index.html` (and `heights.py`) maps SCA-103 raw to that frame. It is SCA-102's gsplat normalization (`similarity_from_cameras` → `align_principal_axes` → z-flip) composed with a similarity from SCA-103 raw to SCA-102 raw. That similarity was found by pairing each scan's COLMAP cameras with the DJI photos' GPS (thumbnail match), fitting each scan to local ENU metres (about 0.9 m median residual), composing the two, and refining with trimmed ICP on solid splat centres (0.28 m median).
 - After that, the page turns it y-up with a −90° turn about x.
 
-Any export trained on that COLMAP model drops in without code changes, such as Brush 30k or gsplat.
+Another export trained on SCA-103's COLMAP model drops in without code changes. A new scan needs a new similarity to SCA-102 raw, found the same way.
 
-The camera views and the six places (`OVERVIEW` and `VIEWS`) are in normalized coordinates. They were placed by laying OSM building outlines over a top view of the scan. To place a geographic point:
+The camera views and the places (`OVERVIEW` and `VIEWS`) are in the page frame. They were placed by laying OSM building outlines over a top view of the scan. To place a geographic point:
 1. Convert it to east/north metres from the Rustaveli monument.
 2. Rotate by 73°.
 3. Scale by 1/111.

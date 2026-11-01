@@ -6,7 +6,7 @@
 #   tools/splat/build.sh [splat.ply]      KEEP=4000000 KEEP_MOBILE=2000000 tools/splat/build.sh ...
 # Needs Node 18+ (splat-transform is fetched by npx at the pinned version) and Python 3 + numpy.
 set -euo pipefail
-SRC="${1:-F:/BASE/SCANS/SCA-102_RUSTAVELI_WIDE_SITE/SPLAT/EXPORT_brush_15k/rustaveli_splat_brush_15k.ply}"
+SRC="${1:-F:/BASE/SCANS/SCA-103_RUSTAVELI_WIDE_2_SITE/SPLAT/EXPORT/SCA-103_RUSTAVELI_WIDE_2_SITE_splat.ply}"
 KEEP="${KEEP:-3000000}"
 KEEP_MOBILE="${KEEP_MOBILE:-1500000}"
 ST="npx -y @playcanvas/splat-transform@3.10.3"

@@ -535,7 +535,7 @@ const SCAN = touch ? 'assets/splats/rustaveli_mobile.sog' : 'assets/splats/rusta
 // of downloading it again (HTTP caching alone does not hold a file this big on iOS). It is read into
 // one buffer as it arrives; the cache gets its own copy streamed to disk alongside. Bump
 // SCAN_VERSION whenever build.sh makes new files.
-const SCAN_VERSION = 'brush15k-1';
+const SCAN_VERSION = 'sca103-1';
 async function download(url) {
   const key = `${url}?v=${SCAN_VERSION}`;
   const cache = await window.caches?.open('tssr-scan').catch(() => null);
@@ -567,13 +567,13 @@ const heights = fetch('assets/splats/rustaveli_heights.bin').then(r => r.arrayBu
 const city = new SplatMesh({ fileBytes: await download(SCAN), fileName: SCAN.split('/').pop(), lod: !touch });
 progress(.6);
 const creep = setInterval(() => progress(shown + (.97 - shown) * .05), 200);
-// The file is in the raw RealityScan/COLMAP frame (−y up, about 1.1 m per unit). Everything below is
-// in gsplat's normalized frame of the same cameras (z up, 1 unit ≈ 110 m): NORM maps raw to that
-// (see tools/splat/README.md), then a quarter turn makes it y-up.
+// The file is in the raw RealityScan/COLMAP frame of scan SCA-103 (−y up, about 0.94 m per unit).
+// Everything below is in gsplat's normalized frame of the earlier scan SCA-102 (z up, 1 unit ≈ 98 m), in
+// which the views were placed: NORM maps raw to that (see tools/splat/README.md), then a quarter turn makes it y-up.
 const NORM = new THREE.Matrix4().set(
-  0.00921831, 0.00159341, -0.00405399, 0.06303984,
-  0.0043536, -0.00306282, 0.00869576, 0.0112516,
-  0.00014116, -0.00959329, -0.00344962, -0.18225071,
+  0.00782547, 0.00120170, -0.00578411, -0.23978075,
+  0.00587534, -0.00258524, 0.00741180, -0.02114386,
+  -0.00061669, -0.00938139, -0.00278339, -0.26418384,
   0, 0, 0, 1);
 city.matrixAutoUpdate = false;
 city.matrix.makeRotationX(-Math.PI / 2).multiply(NORM);
@@ -600,7 +600,7 @@ const VIEWS = {
   'Muhudo':              { p: [-0.542, -0.501, -0.05], az: 100, el: 22, d: 1.4, fov: 24 },
   'Jazz Club 1984':      { p: [0.073, 0.587, -0.33], az: 10, el: 32, d: 1.4, fov: 26 },     // its avenue front
   'Avenue Renovation':   { p: [-0.33, 0.18, -0.25], az: 170, el: 28, d: 1.4, fov: 28 },   // the dug-up pavement at the ring
-  'TSSR':                { p: [-0.188, -0.5, 0.08], az: 70, el: -14, d: 0.3, fov: 55 },     // the balcony, from the street below by McDonald's
+  'TSSR':                { p: [-0.188, -0.5, 0.08], az: 25, el: 4, d: 0.13, fov: 62 },      // the balcony, from the far kerb
 };
 const world = ([x, y, z]) => new THREE.Vector3(x, z, -y);
 const U_EYE = new THREE.Vector3();
@@ -728,6 +728,7 @@ let camAz = START.az, camEl = START.el, camD = START.d, camFov = START.fov, foca
 // down is a swipe to the next slide; one that starts sideways orbits both ways. The offset stays after release and eases back
 // to zero when the next spot takes the focus.
 const UP = new THREE.Vector3(0, 1, 0), side = new THREE.Vector3(), off = new THREE.Vector3();
+const rest = new THREE.Vector3(), base = new THREE.Vector3();
 let yaw = 0, pitch = 0, yawTo = 0, pitchTo = 0, heldTo = 0, swayT = 0, swayAmt = 0, dragK = -1, drag = null;
 canvas.addEventListener('pointerdown', e => {
   if ((window.scanFocus ?? -1) < 0) return;
@@ -741,9 +742,9 @@ canvas.addEventListener('pointermove', e => {
   if (drag.touch && !drag.moved && Math.abs(dy) > Math.abs(dx)) { drag = null; return; }   // a swipe
   drag.moved = drag.moved || Math.abs(dx) + Math.abs(dy) > 4;
   if (drag.touch && drag.moved) window.scanDragged = true;   // tells the swipe handler to stand down
-  // Only so far round: beyond about 30° from each view the drone never flew and the scan is haze.
+  // Only so far round: beyond about 40° from each view the drone never flew and the scan is haze.
   // The overview hangs low between roofs, so it turns less still.
-  const yawMax = (window.scanFocus ?? 0) === 0 ? .3 : .5;
+  const yawMax = (window.scanFocus ?? 0) === 0 ? .3 : .7;
   yawTo = THREE.MathUtils.clamp(yawTo - dx * .006, -yawMax, yawMax);
   pitchTo = THREE.MathUtils.clamp(pitchTo + dy * .004, -.1, .35);   // drag down: look from above
   drag.x = e.clientX; drag.y = e.clientY;
@@ -753,7 +754,6 @@ canvas.addEventListener('pointerup', endDrag);
 canvas.addEventListener('pointercancel', endDrag);
 // Roof-height grid (1 byte per 2 m cell over x, y in [-3, 3] of the scan frame; see heights.py).
 const H = await heights, HN = 300, HR = 3;
-let floorY = -9;
 function floorAt(x, z) {                 // world x, z -> highest roof round there (world y); -9: none
   if (!H) return -9;
   const i = Math.floor((x + HR) / (2 * HR) * HN), j = Math.floor((-z + HR) / (2 * HR) * HN);
@@ -761,6 +761,40 @@ function floorAt(x, z) {                 // world x, z -> highest roof round the
   for (let b = j - 1; b <= j + 1; b++) for (let a = i - 1; a <= i + 1; a++)
     if (a >= 0 && a < HN && b >= 0 && b < HN) top = Math.max(top, H[b * HN + a]);
   return top ? -1 + top * .01 : -9;
+}
+// A flight is one fixed curve: bearing, height, distance and aim all ease by the same factor, so the
+// camera is wherever r, the share of the way still to go, puts it (1 leaving, 0 arrived). When a flight
+// starts the curve is checked against the roof grid once, and the lift it needs to clear the roofs is
+// spread smoothly along it: the camera climbs early and evenly, never bumping up at a roof. The last
+// stretch into the view is left out, so a low view such as the overview or TSSR keeps its place.
+const LN = 96, need = new Float32Array(LN + 1), gap = new Float32Array(LN + 1), away = new Float32Array(LN + 1), fly = { az: 0, el: 0, d: 0, aim: new THREE.Vector3(), lift: 0 };
+let flyR = 0;
+function flightAt(r, v, target, out) {   // camera position r of the way back from the view, before the smoothed lift
+  const az = v.az - Math.atan2(Math.sin(v.az - fly.az), Math.cos(v.az - fly.az)) * r;
+  const el = v.el + (fly.el - v.el) * r, d = v.d + (fly.d - v.d) * r;
+  out.copy(fly.aim).sub(target).multiplyScalar(r).add(target);
+  out.x += Math.cos(el) * Math.cos(az) * d; out.y += Math.sin(el) * d; out.z -= Math.cos(el) * Math.sin(az) * d;
+  out.y += fly.lift * r + Math.abs(d - v.d) * .3;
+  return out;
+}
+function planFlight(v, target) {
+  Object.assign(fly, { az: camAz, el: camEl, d: camD, lift: aim.distanceTo(target) * .6 });
+  fly.aim.copy(aim);
+  flightAt(0, v, target, rest);
+  for (let i = 0; i <= LN; i++) {
+    flightAt(i / LN, v, target, base);
+    away[i] = THREE.MathUtils.smoothstep(Math.hypot(base.x - rest.x, base.z - rest.z), .02, .07);
+    gap[i] = Math.max(0, floorAt(base.x, base.z) + .05 - base.y) * away[i];
+  }
+  const D = 8;                            // widen each need over its neighbours, then soften it
+  for (let i = 0; i <= LN; i++) { let m = 0; for (let j = Math.max(0, i - D); j <= Math.min(LN, i + D); j++) m = Math.max(m, gap[j]); need[i] = m; }
+  const top = need.slice();
+  for (let i = 0; i <= LN; i++) {
+    let sum = 0, n = 0;
+    for (let j = Math.max(0, i - D); j <= Math.min(LN, i + D); j++) { sum += top[j]; n++; }
+    need[i] = Math.max(sum / n, gap[i]) * away[i];   // and gone by the time the camera is in the view
+  }
+  flyR = 1;
 }
 function place(t, k, dt) {
   const w = canvas.clientWidth, h = canvas.clientHeight;
@@ -773,7 +807,7 @@ function place(t, k, dt) {
     lastW = w; lastH = h;
   }
   const v = k >= 0 ? views[k] : START, target = k >= 0 ? targets[k] : center;
-  if (k !== dragK) { yawTo = pitchTo = 0; heldTo = 0; dragK = k; }
+  if (k !== dragK) { yawTo = pitchTo = 0; heldTo = 0; dragK = k; planFlight(v, target); }
   // Once the visitor takes the camera the drift and bob stop, so nothing but the drag moves the view.
   if (!heldTo) swayT += dt;            // the drift's clock stops (without a jump) while held
   const ease = 1 - Math.exp(-dt * .0016);
@@ -797,14 +831,10 @@ function place(t, k, dt) {
   off.applyAxisAngle(side, pitch);
   camera.position.copy(aim).add(off);
   // In flight the camera rises over the roofs and settles into the next view only as it arrives,
-  // so it never cuts through the scan between two low views. At rest this is zero.
-  camera.position.y += aim.distanceTo(target) * .6 + Math.abs(camD - v.d) * .3;
-  // Never inside the scan: stay a few metres above the roofs under the camera (tools/splat/heights.py).
-  // The floor is capped at the view's own height, so a low view such as the overview keeps its place.
-  const restY = aim.y + dir.y * camD;
-  const fl = floorAt(camera.position.x, camera.position.z);
-  floorY += (fl - floorY) * (fl > floorY ? 1 : 1 - Math.exp(-dt * .004));   // rises at once, sinks slowly
-  camera.position.y = Math.max(camera.position.y, Math.min(floorY + .05, restY));
+  // so it never cuts through the scan between two low views (planFlight). At rest this is zero.
+  flyR *= 1 - ease;
+  const x = flyR * LN, i0 = Math.min(LN - 1, Math.floor(x));
+  camera.position.y += aim.distanceTo(target) * .6 + Math.abs(camD - v.d) * .3 + need[i0] + (need[i0 + 1] - need[i0]) * (x - i0);
   camera.lookAt(aim);
   camera.updateMatrixWorld();          // the dots are projected before render: use this frame's camera
   focal += (camera.position.distanceTo(target) - focal) * ease;
