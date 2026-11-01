@@ -711,19 +711,23 @@ city.worldModifier = dyno.dynoBlock({ gsplat: dyno.Gsplat }, { gsplat: dyno.Gspl
 city.updateGenerator();
 
 // Effect clocks, driven from the scroll position (k = spot in focus, -1 = not on the scan).
-let fxK = -1, enterAt = -1e9, leaveAt = -1e9, spotAt = -1e9, lastSig = '', lastFx = -1e9;
+let fxK = -1, enterAt = -1e9, leaveAt = -1e9, spotAt = -1e9, prevSpotAt = -1e9, pendingK = -1, lastSig = '', lastFx = -1e9;
 function effects(t, k, dt) {
   if (k !== fxK) {
     if (fxK < 0 && k >= 0) { enterAt = t; spotAt = -1e9; }   // first spot: no wave, the reveal is enough
     else if (k < 0) leaveAt = t;
-    else spotAt = t;
-    if (k >= 0) U.focus.value.copy(targets[k]);
+    // The wave and the colour wait for the camera: they start as it settles into the new view, so the
+    // wave is seen, not spent on the way.
+    else { prevSpotAt = spotAt; spotAt = t + fly.dur * .8; }
+    if (k >= 0 && spotAt <= t) U.focus.value.copy(targets[k]);
+    pendingK = k >= 0 && spotAt > t ? k : -1;
     fxK = k;
   }
+  if (pendingK >= 0 && t >= spotAt) { U.focus.value.copy(targets[pendingK]); pendingK = -1; }
   const s = ms => Math.max(0, ms) / 1000;
   U.reveal.value = k >= 0 ? Math.min(1, s(t - enterAt - 400) / 2.6) : U.reveal.value;
   U.dust.value = k < 0 ? Math.min(1, s(t - leaveAt) / 1.3) : 0;
-  U.wave.value = Math.min(99, s(t - spotAt));
+  U.wave.value = Math.min(99, s(t - (t < spotAt ? prevSpotAt : spotAt)));   // the old wave runs on meanwhile
   U.cut.value = k === 0 ? .35 : U.cut.value * Math.exp(-dt * .003);   // on at once, off gently
   // After the reveal the colour drains from the outside in over about a second (not on the overview).
   U.focusAmt.value += ((k > 0 && t - enterAt > 3000 ? 1 : 0) - U.focusAmt.value) * (1 - Math.exp(-dt * .0015));
@@ -847,7 +851,9 @@ function place(t, k, dt) {
   camera.fov = camFov;
   camera.updateProjectionMatrix();
   // The overview is one fixed frame (it hangs low between roofs, any drift shows haze or ground): no sway there.
-  swayAmt += ((k === 0 || EDIT || u < 1 ? 0 : 1) - swayAmt) * ease;   // drifts only once it has arrived
+  // The drift sets in only once the camera has arrived, from standstill over four seconds (an eased ramp,
+  // so the camera does not lurch from the stop into the drift).
+  swayAmt = k === 0 || EDIT ? 0 : THREE.MathUtils.smootherstep(fly.t - fly.dur, 0, 4000);
   const az = v.az + Math.sin(swayT * .00012) * .1 * swayAmt, el = v.el + Math.sin(swayT * .0002) * .03 * swayAmt;
   dir.set(Math.cos(el) * Math.cos(az), Math.sin(el), -Math.cos(el) * Math.sin(az));
   const ue = 1 - Math.exp(-dt * .012);
