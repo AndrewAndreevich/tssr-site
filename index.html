@@ -94,7 +94,8 @@
     letter-spacing:.08em; text-transform:uppercase; color:#fff; text-shadow:0 1px 6px rgba(0,0,0,.6);
     opacity:0; transform:translateX(-6px); transition:opacity .4s ease, transform .4s ease; }
   .spot.active b { opacity:1; transform:none; transition-delay:.3s; }
-  .ph figcaption > * { transition:opacity .35s ease; }
+  /* Own layers: over a busy WebGL canvas iOS Safari otherwise keeps showing the old text for seconds. */
+  .ph figcaption > * { transition:opacity .35s ease; will-change:opacity; transform:translateZ(0); }
   .ph figcaption.out > * { opacity:0; }
   body.full .ph figcaption { padding:160px 64px 64px; }
   body.full .ph h2 { font-size:clamp(48px, 7vw, 110px); }
@@ -121,9 +122,9 @@
 
   .counter { position:fixed; top:24px; left:24px; font-size:13px; letter-spacing:.08em; color:var(--muted); z-index:2; }
   .counter b { color:var(--accent); font-weight:500; }
-  .dots { position:fixed; right:24px; top:50%; transform:translateY(-50%); display:flex; flex-direction:column; gap:10px; z-index:2; }
+  .dots { position:fixed; left:50%; top:28px; transform:translateX(-50%); display:flex; gap:12px; z-index:2; }
   .dots i { width:6px; height:6px; border-radius:50%; background:var(--ink); opacity:.18; transition:opacity .3s, transform .3s, background .3s; }
-  .dots i:nth-child(even) { translate:-9px 0; }   /* zigzag */
+  .dots i:nth-child(even) { translate:0 8px; }   /* zigzag */
   .dots i.on { opacity:1; background:radial-gradient(circle, #fffbe6 0 30%, var(--glow) 70%); transform:scale(1.5);
     box-shadow:0 0 4px 1px rgba(255,214,90,.9), 0 0 12px 4px rgba(255,196,60,.4); }
   body.split .dots i:not(.on) { background:#fff; opacity:.45; }
@@ -136,7 +137,7 @@
 
   @media (max-width:640px) {
     .counter { top:16px; left:16px; }
-    .dots { right:12px; }
+    .dots { top:20px; }
     .meta { font-size:13px; }
     .chapter-label, body.chapter .hint { left:50%; }
     .chapter-label { top:44px; }
@@ -589,7 +590,7 @@ loadEl.classList.add('done');
 // Overview: low from First Republic Square, looking west along the avenue — sky, Mtatsminda with
 // the TV tower, the Academy front and tower. The drone never flew lower than this, so the roof in
 // front stays soft; the focus is on the Academy, which blurs it like a foreground.
-const OVERVIEW = { p: [-0.134, -0.055, 0.081], az: 119.4, el: -27, d: 1.4, fov: 45 };
+const OVERVIEW = { p: [-0.134, -0.055, 0.081], az: 125.1, el: -25.3, d: 1.4, fov: 45 };
 const VIEWS = {
   'Rustaveli Monument':  { p: [-0.669, -0.165, -0.137], az: 150, el: 10, d: 1.6, fov: 16 },   // against the metro dome
   'Academy of Sciences': { p: [-0.083, 0.004, 0.1], az: 150, el: 14, d: 1.6, fov: 28 },
@@ -692,7 +693,7 @@ city.worldModifier = dyno.dynoBlock({ gsplat: dyno.Gsplat }, { gsplat: dyno.Gspl
 city.updateGenerator();
 
 // Effect clocks, driven from the scroll position (k = spot in focus, -1 = not on the scan).
-let fxK = -1, enterAt = -1e9, leaveAt = -1e9, spotAt = -1e9, lastSig = '';
+let fxK = -1, enterAt = -1e9, leaveAt = -1e9, spotAt = -1e9, lastSig = '', lastFx = -1e9;
 function effects(t, k, dt) {
   if (k !== fxK) {
     if (fxK < 0 && k >= 0) { enterAt = t; spotAt = -1e9; }   // first spot: no wave, the reveal is enough
@@ -711,7 +712,8 @@ function effects(t, k, dt) {
   // Re-run the per-splat effects only while something animates; a still scan costs nothing extra.
   const sig = [U.reveal.value, U.dust.value, U.focusAmt.value.toFixed(3), U.wave.value < 3 ? U.wave.value : 3,
     U.cut.value.toFixed(3), k].join();
-  if (sig !== lastSig) { lastSig = sig; city.updateVersion(); }
+  // Phones: at most 8 times a second, so the reveal and the waves leave the GPU room for the page.
+  if (sig !== lastSig && (!touch || t - lastFx > 120)) { lastSig = sig; lastFx = t; city.updateVersion(); }
 }
 
 // Camera: starts on the overview, then flies from place to place, each seen from its own side,
@@ -723,7 +725,7 @@ let camAz = START.az, camEl = START.el, camD = START.d, camFov = START.fov, foca
 // down is a swipe to the next slide; one that starts sideways orbits both ways. The offset stays after release and eases back
 // to zero when the next spot takes the focus.
 const UP = new THREE.Vector3(0, 1, 0), side = new THREE.Vector3(), off = new THREE.Vector3();
-let yaw = 0, pitch = 0, yawTo = 0, pitchTo = 0, heldTo = 0, swayT = 0, dragK = -1, drag = null;
+let yaw = 0, pitch = 0, yawTo = 0, pitchTo = 0, heldTo = 0, swayT = 0, swayAmt = 0, dragK = -1, drag = null;
 canvas.addEventListener('pointerdown', e => {
   if ((window.scanFocus ?? -1) < 0) return;
   heldTo = 1;
@@ -780,7 +782,9 @@ function place(t, k, dt) {
   camera.fov = camFov;
   camera.updateProjectionMatrix();
   aim.lerp(target, ease);
-  const az = camAz + Math.sin(swayT * .00012) * .1, el = camEl + Math.sin(swayT * .0002) * .03;
+  // The overview is one fixed frame (it hangs low between roofs, any drift shows haze or ground): no sway there.
+  swayAmt += ((k === 0 ? 0 : 1) - swayAmt) * ease;
+  const az = camAz + Math.sin(swayT * .00012) * .1 * swayAmt, el = camEl + Math.sin(swayT * .0002) * .03 * swayAmt;
   dir.set(Math.cos(el) * Math.cos(az), Math.sin(el), -Math.cos(el) * Math.sin(az));
   const ue = 1 - Math.exp(-dt * .012);
   yaw += (yawTo - yaw) * ue; pitch += (pitchTo - pitch) * ue;
@@ -816,7 +820,7 @@ function drawSpots(k) {
   });
 }
 
-place(0, -1, 1e6);
+place(0, window.scanFocus ?? -1, 1e6);   // the page may open on the overview: start exactly in it, no fly-in
 renderer.render(scene, camera);        // warm-up: compile shaders and sort before it is seen
 document.body.classList.add('scan-ready');
 window.scanReady = true;
