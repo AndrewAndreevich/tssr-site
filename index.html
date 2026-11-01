@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  :root { --ink:#16130f; --paper:#f2eee6; --muted:#6d655a; --accent:#a8412a; --ease:cubic-bezier(.7,0,.2,1); }
+  :root { --ink:#16130f; --paper:#f2eee6; --muted:#6d655a; --accent:#a8412a; --glow:#ffd45a;--ease:cubic-bezier(.7,0,.2,1); }
   html, body { margin:0; height:100%; overflow:hidden; background:var(--paper); color:var(--ink);
     font-family:Inter, system-ui, sans-serif; -webkit-font-smoothing:antialiased; }
 
@@ -86,8 +86,10 @@
   .spot i { position:absolute; left:-6px; top:-6px; width:12px; height:12px; border-radius:50%;
     background:#fff; box-shadow:0 0 0 1px rgba(0,0,0,.25); transform:scale(.7); opacity:.75;
     transition:transform .5s ease, background .4s ease, opacity .4s ease; }
-  .spot.active i { background:var(--accent); transform:scale(1.25); opacity:1;
-    box-shadow:0 0 0 6px rgba(168,65,42,.25); }
+  /* The spot in focus glows like light coming out of a hole: white-hot core, yellow halo. */
+  .spot.active i { background:radial-gradient(circle, #fffbe6 0 25%, var(--glow) 60%, #e0a21a 100%);
+    transform:scale(1.25); opacity:1;
+    box-shadow:0 0 6px 2px rgba(255,214,90,.9), 0 0 22px 8px rgba(255,196,60,.45), 0 0 48px 18px rgba(255,180,40,.18); }
   .spot b { position:absolute; left:16px; top:-9px; white-space:nowrap; font-size:12px; font-weight:500;
     letter-spacing:.08em; text-transform:uppercase; color:#fff; text-shadow:0 1px 6px rgba(0,0,0,.6);
     opacity:0; transform:translateX(-6px); transition:opacity .4s ease, transform .4s ease; }
@@ -121,7 +123,9 @@
   .counter b { color:var(--accent); font-weight:500; }
   .dots { position:fixed; right:24px; top:50%; transform:translateY(-50%); display:flex; flex-direction:column; gap:10px; z-index:2; }
   .dots i { width:6px; height:6px; border-radius:50%; background:var(--ink); opacity:.18; transition:opacity .3s, transform .3s, background .3s; }
-  .dots i.on { opacity:1; background:var(--accent); transform:scale(1.5); }
+  .dots i:nth-child(even) { translate:-9px 0; }   /* zigzag */
+  .dots i.on { opacity:1; background:radial-gradient(circle, #fffbe6 0 30%, var(--glow) 70%); transform:scale(1.5);
+    box-shadow:0 0 4px 1px rgba(255,214,90,.9), 0 0 12px 4px rgba(255,196,60,.4); }
   body.split .dots i:not(.on) { background:#fff; opacity:.45; }
   body.full .counter { color:rgba(255,255,255,.7); }
   .hint { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); font-size:12px; letter-spacing:.12em;
