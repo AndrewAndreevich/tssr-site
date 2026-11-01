@@ -33,3 +33,18 @@ The camera views and the places (`OVERVIEW` and `VIEWS`) are in the page frame. 
 2. Rotate by 73°.
 3. Scale by 1/111.
 4. Add the monument's position, (-0.669, -0.165).
+
+## Editing the views
+
+```bash
+python tools/scan_editor.py        # then open http://localhost:8772/?edit
+```
+
+With `?edit` the scan gets a panel:
+- dragging turns the camera round the place without limits, and the wheel moves it closer or further;
+- "Move dot" and "Move aim" put the place's dot, or the point the camera turns round, on the first wall or roof under the next click;
+- sliders set the lens and the flight into the place: arc height (how high the curve goes over the roofs), swing out (how far the camera backs out of the old view and comes in along the new one) and flight time;
+- "Replay flight" flies in again from the place before;
+- "Save" writes every place to `assets/splats/scan_views.json`.
+
+The page reads that file on load, and it overrides `OVERVIEW` and `VIEWS` in `index.html` field by field.
