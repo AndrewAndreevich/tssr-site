@@ -608,12 +608,15 @@ const VIEWS = {
   'Avenue Renovation':   { p: [-0.33, 0.18, -0.25], az: 170, el: 28, d: 1.4, fov: 28 },   // the dug-up pavement at the ring
   'TSSR':                { p: [-0.186, -0.52, 0.08], az: 2, el: -8, d: 0.12, fov: 70 },     // the façade from below, across the street
 };
-const EDIT = new URLSearchParams(location.search).has('edit');
+const QS = new URLSearchParams(location.search), EDIT = QS.has('edit');
+// Phones get their own variant of a view where one is set (its "phone" fields); ?phone forces it on a computer.
+const PHONE = QS.has('phone') || touch || narrow();
 // Views set in the editor (open the page with ?edit, see tools/scan_editor.py) are saved to
 // scan_views.json and override the ones above, field by field.
 const SAVED = await fetch(`assets/splats/scan_views.json?t=${Date.now()}`).then(r => r.ok ? r.json() : {}).catch(() => ({}));
-Object.assign(OVERVIEW, SAVED.Overview);
-for (const s in VIEWS) Object.assign(VIEWS[s], SAVED[s]);
+const variant = v => v && (({ phone, ...rest }) => PHONE ? { ...rest, ...phone } : rest)(v);
+Object.assign(OVERVIEW, variant(SAVED.Overview));
+for (const s in VIEWS) Object.assign(VIEWS[s], variant(SAVED[s]));
 const world = ([x, y, z]) => new THREE.Vector3(x, z, -y);
 const U_EYE = new THREE.Vector3();
 // Each view also shapes the flight into it (see planFlight): arc, swing and time.
@@ -953,12 +956,15 @@ const editor = (() => {
       planFlight(views[kk], targets[kk]);
     }
     if (b === 'save') {
+      // On a phone (or with ?phone) only the phone variants are written; the computer views stay as saved.
       const out = {};
       for (let i = 0; i < views.length; i++) {
-        const v = views[i], at = scanOf(targets[i]);
+        const v = views[i], at = scanOf(targets[i]), name = nameOf(i);
         const p = i === 0 ? at : scanOf(spots[i - 1]);
-        out[nameOf(i)] = { p, ...(p.join() !== at.join() ? { at } : {}), az: r1(deg(v.az)), el: r1(deg(v.el)), d: r4(v.d),
+        const view = { p, ...(p.join() !== at.join() ? { at } : {}), az: r1(deg(v.az)), el: r1(deg(v.el)), d: r4(v.d),
           fov: v.fov, arc: v.arc, swing: v.swing, time: v.time };
+        const { phone, ...base } = SAVED[name] ?? {};
+        out[name] = PHONE ? { ...(SAVED[name] ? base : view), phone: view } : { ...view, ...(phone ? { phone } : {}) };
       }
       const body = JSON.stringify(out, null, 2);
       const ok = await fetch('save-views', { method: 'POST', body }).then(r => r.ok).catch(() => false);

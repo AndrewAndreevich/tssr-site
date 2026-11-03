@@ -48,3 +48,5 @@ With `?edit` the scan gets a panel:
 - "Save" writes every place to `assets/splats/scan_views.json`.
 
 The page reads that file on load, and it overrides `OVERVIEW` and `VIEWS` in `index.html` field by field.
+
+A place can have a `phone` entry with its own fields, for example `"phone": { "d": 0.15, "fov": 80 }`. Phones use it (touch screens, or windows up to 640 px wide), and computers ignore it. To edit the phone views, open `?edit&phone`: Save then writes only the `phone` entries and leaves the computer views as they were.
