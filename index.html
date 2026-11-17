@@ -61,7 +61,7 @@
   .ph .bg { position:absolute; inset:-60px; background:center / cover no-repeat; filter:blur(40px) brightness(.8); }
   .ph img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
   .ph figcaption { position:absolute; left:0; right:0; bottom:0; padding:120px 40px 40px; color:#fff;
-    background:linear-gradient(transparent, rgba(0,0,0,.72)); transition:padding 1.1s var(--ease);
+    background:linear-gradient(transparent, rgba(0,0,0,.72)); transition:padding 1.1s var(--ease), opacity .4s;
     pointer-events:none; }   /* the scan's place dots under it take taps */
   .ph .kicker { font-size:12px; letter-spacing:.12em; text-transform:uppercase; opacity:.8; }
   .ph h2 { margin:8px 0 0; font-family:'Instrument Serif', serif; font-weight:400; font-size:clamp(32px, 3.6vw, 54px);
@@ -127,12 +127,20 @@
   .counter { position:fixed; top:24px; left:24px; font-size:13px; letter-spacing:.08em; color:var(--muted); z-index:2; }
   .counter b { color:var(--accent); font-weight:500; }
   .dots { position:fixed; left:50%; top:28px; transform:translateX(-50%); display:flex; gap:12px; z-index:2; }
-  .dots i { width:6px; height:6px; border-radius:50%; background:var(--ink); opacity:.18; transition:opacity .3s, transform .3s, background .3s; }
-  .dots i:nth-child(even) { translate:0 8px; }   /* zigzag */
-  .dots i.on { opacity:1; background:radial-gradient(circle, #fffbe6 0 30%, var(--glow) 70%); transform:scale(1.5);
+  /* Little warm bulbs, like the string of lights on the room's wall: the step you are on burns brightest. */
+  .dots i { width:5px; height:5px; border-radius:50%; background:radial-gradient(circle, #fff3c4 0 35%, #e8b84a 100%);
+    opacity:calc(.1 + .45 * var(--ld, 1)); box-shadow:0 0 3px 1px rgba(255,200,90,calc(.35 * var(--ld, 1)));
+    transition:opacity .3s, transform .3s, background .3s; }
+  /* While the scans download the step dots are the progress: each scan's row lights up dot by dot (--ld). */
+  body.booting .dots { z-index:11; }
+  .dots i:nth-child(even) { translate:0 var(--zz, 16px); }   /* zigzag; set to the room's lattice by the scan module */
+  .dots i.on { opacity:calc(.25 + .75 * var(--ld, 1)); background:radial-gradient(circle, #fffbe6 0 30%, var(--glow) 70%); transform:scale(1.5);
     box-shadow:0 0 4px 1px rgba(255,214,90,.9), 0 0 12px 4px rgba(255,196,60,.4); }
-  body.split .dots i:not(.on) { background:#fff; opacity:.45; }
   body.full .counter { color:rgba(255,255,255,.7); }
+  /* Scrolling from the last spot into the room: the row of bulbs leaves the top for the transition's own canvas. */
+  .dots { transition:opacity .4s; }
+  body.scrubbing .dots, body.scrubbing .ph figcaption, body.scrubbing .spots { opacity:0 !important; transition-delay:0s; }
+  .bulbs { position:fixed; inset:0; width:100%; height:100%; z-index:1; pointer-events:none; }
   .hint { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); font-size:12px; letter-spacing:.12em;
     text-transform:uppercase; color:var(--muted); transition:opacity .4s; }
   body.chapter .hint { left:25%; }
@@ -232,16 +240,31 @@ const AROUND = [
     text:'Tbilisi School for Social Research — our house on the square, next door to McDonald’s.' },
 ];
 
+// After the square, one room seen from inside (our scan SCA-104): a slide of its own, loaded while the square is on;
+// then a second room (SCA-106), three views.
+const ROOM = { name:'Example Room', where:'PVF Scan · SCA-104',
+  text:'A room scanned from the inside — it loads in the background while you look round the square.' };
+const ROOM2 = { name:'Example Room 2', where:'PVF Scan · SCA-106',
+  text:'A second room, scanned the same way.' };
+const ROOM3 = { name:'Example Room 3', where:'PVF Scan · SCA-105',
+  text:'A third room, seen from outside its walls.' };
+
 // The montage plays by itself on load and lands on Tbilisi.
-// Steps: 0 Tbilisi · places · last place full screen as a 3D scan: an overview, then one step per scan spot.
+// Steps: 0 Tbilisi · places · last place full screen as a 3D scan: an overview, then one step per scan spot · the room.
 const SPOTS = AROUND.length;
 window.SCAN_SPOTS = AROUND.map(a => a.name);
-const FIRST_PLACE = 1, FULL = FIRST_PLACE + PLACES.length, TOTAL = FULL + 1 + SPOTS;
+const ROOM_VIEWS_N = 3;   // the room's stops (the scan site's saved views 6, 7, 8)
+// the rooms after it, each with its stops (the scan site's first three saved views of each)
+const EXTRA_ROOMS = [{ ...ROOM2, n: 3 }, { ...ROOM3, n: 3 }];
+const EXTRA_N = EXTRA_ROOMS.reduce((s, r) => s + r.n, 0);
+const FIRST_PLACE = 1, FULL = FIRST_PLACE + PLACES.length, TOTAL = FULL + 1 + SPOTS + ROOM_VIEWS_N + EXTRA_N;
 window.SCAN_FULL = FULL;
 // For now the page is only the scan: it opens on a loading screen, then the scan and its spots.
 // Set to false to bring back the city montage, the Tbilisi map and the places before it.
 const SCAN_ONLY = true;
 const FIRST_STEP = SCAN_ONLY ? FULL : 0;
+// The page opens on the last spot (TSSR); scrolling down goes into the room, up back over the square.
+const OPEN_STEP = FULL + SPOTS;
 
 const $ = id => document.getElementById(id);
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -385,8 +408,12 @@ let capKey = -1, capTimer;
 function scanCaption(k) {
   if (k === capKey) return;
   capKey = k;
-  const p = PLACES[PLACES.length - 1], a = AROUND[k];
-  const kicker = a ? `${String(k + 1).padStart(2, '0')} / ${String(AROUND.length).padStart(2, '0')} · ${a.where}`
+  // which room (if any) step k is in, and which of its stops
+  let x = -1, at = k - SPOTS - ROOM_VIEWS_N;
+  if (at >= 0) for (x = 0; x < EXTRA_ROOMS.length - 1 && at >= EXTRA_ROOMS[x].n; x++) at -= EXTRA_ROOMS[x].n;
+  const p = PLACES[PLACES.length - 1], extra = x >= 0 ? EXTRA_ROOMS[x] : null, room = k >= SPOTS && !extra;
+  const a = extra ?? (room ? ROOM : AROUND[k]);
+  const kicker = extra ? `${String(at + 1).padStart(2, '0')} / ${String(extra.n).padStart(2, '0')} · ${extra.where}` : room ? `${String(k - SPOTS + 1).padStart(2, '0')} / ${String(ROOM_VIEWS_N).padStart(2, '0')} · ${ROOM.where}` : a ? `${String(k + 1).padStart(2, '0')} / ${String(AROUND.length).padStart(2, '0')} · ${a.where}`
     : SCAN_ONLY ? p.where : `${String(PLACES.length).padStart(2, '0')} / ${String(PLACES.length).padStart(2, '0')} · ${p.where}`;
   const cap = lastCap();
   cap.classList.add('out');
@@ -424,11 +451,32 @@ function render(i, dir) {
 
 let current = 0, locked = false;
 
+// Into each room the scroll does not step: it scrubs one long transition, window.wipeT[z] (0 the step before,
+// 1 the room; the scan module plays it). The step changes only at either end. z 0: from the last spot into the
+// first room; then from each room's last view into the next room.
+const ROOM_STEP = FULL + 1 + SPOTS;
+const WIPES = [ROOM_STEP];
+EXTRA_ROOMS.reduce((s, r) => (WIPES.push(s), s + r.n), ROOM_STEP + ROOM_VIEWS_N);
+window.wipeT = WIPES.map(s => OPEN_STEP >= s ? 1 : 0);
+// the transition the scroll is in (or would start) going dy from the current step; -1: none
+const inScrub = dy => locked ? -1 : WIPES.findIndex((s, z) =>
+  (current === s - 1 && (dy > 0 || window.wipeT[z] > 0)) || (current === s && (dy < 0 || window.wipeT[z] < 1)));
+function scrub(d, z) {
+  const s = WIPES[z], t = window.wipeT[z] = Math.min(1, Math.max(0, window.wipeT[z] + d));
+  document.body.classList.toggle('scrubbing', t > 0 && t < 1);
+  const end = t >= 1 && current !== s ? s : t <= 0 && current === s ? s - 1 : -1;
+  if (end < 0) return;
+  current = end; render(current, t >= 1 ? 1 : -1);
+  locked = true; setTimeout(() => locked = false, 700);   // the scroll's run-on must not carry on to the next step
+}
+
 function goTo(next) {
   if (locked || next === current || next < FIRST_STEP || next >= TOTAL) return;
   const dir = Math.sign(next - current);
   locked = true;
   current = next;
+  window.wipeT = WIPES.map(s => next >= s ? 1 : 0);   // a jump (the place dots) plays the transition through
+  document.body.classList.remove('scrubbing');
   Promise.all([wait(1300), render(current, dir)]).then(() => locked = false);
 }
 const go = dir => goTo(current + dir);
@@ -437,19 +485,31 @@ window.scanGoTo = k => goTo(FULL + k);    // the scan's place dots: 0 overview, 
 let acc = 0;
 window.addEventListener('wheel', e => {
   e.preventDefault();
+  const z = inScrub(e.deltaY);
+  if (z >= 0) { scrub(e.deltaY / 1800, z); acc = 0; return; }
   acc += e.deltaY;
   if (Math.abs(acc) > 40) { go(Math.sign(acc)); acc = 0; }
 }, { passive: false });
 
 window.addEventListener('keydown', e => {
-  if (['ArrowDown', 'PageDown', ' '].includes(e.key)) go(1);
-  if (['ArrowUp', 'PageUp'].includes(e.key)) go(-1);
+  const dir = ['ArrowDown', 'PageDown', ' '].includes(e.key) ? 1 : ['ArrowUp', 'PageUp'].includes(e.key) ? -1 : 0;
+  const z = dir ? inScrub(dir) : -1;
+  if (z >= 0) scrub(dir * .25, z);
+  else if (dir) go(dir);
 });
 
-let touchY = null;
-window.addEventListener('touchstart', e => touchY = e.touches[0].clientY, { passive: true });
+let touchY = null, touchLast = null, touchScrubbed = false;
+window.addEventListener('touchstart', e => { touchY = touchLast = e.touches[0].clientY; touchScrubbed = false; }, { passive: true });
+window.addEventListener('touchmove', e => {
+  if (touchLast === null || window.scanDragged) return;
+  const y = e.touches[0].clientY, dy = touchLast - y;
+  touchLast = y;
+  const z = dy ? inScrub(dy) : -1;
+  if (z >= 0) { scrub(dy / (innerHeight * 2.5), z); touchScrubbed = true; }
+}, { passive: true });
 window.addEventListener('touchend', e => {
   if (window.scanDragged) { window.scanDragged = false; touchY = null; return; }   // was orbiting the scan
+  if (touchScrubbed) { touchY = null; return; }
   if (touchY === null) return;
   const dy = touchY - e.changedTouches[0].clientY;
   if (Math.abs(dy) > 40) go(Math.sign(dy));
@@ -458,27 +518,43 @@ window.addEventListener('touchend', e => {
 
 $('city').textContent = CITIES[0].city;
 if (SCAN_ONLY) {
-  current = FULL; showPhoto(PLACES.length - 1); render(FULL, 0);
-  lastCap().querySelector('.kicker').textContent = PLACES[PLACES.length - 1].where;
+  current = OPEN_STEP; showPhoto(PLACES.length - 1); render(OPEN_STEP, 0);
 }
 else { render(0, 0); showPhoto(0); }
+
+// The step dots show the downloads: the square's row as the square comes in, then the first room's, then each
+// next room's (the scans load one after another), each row lighting up dot by dot.
+{
+  const rows = [TOTAL - FIRST_STEP - ROOM_VIEWS_N - EXTRA_N, ROOM_VIEWS_N, ...EXTRA_ROOMS.map(r => r.n)];
+  const fill = (row, p) => {
+    const from = rows.slice(0, row).reduce((a, b) => a + b, 0), ds = $('dots').children;
+    for (let n = 0; n < rows[row]; n++) ds[from + n]?.style.setProperty('--ld', Math.min(1, Math.max(0, p * rows[row] - n)).toFixed(3));
+  };
+  if (SCAN_ONLY) rows.forEach((_, r) => fill(r, 0));
+  addEventListener('scanprogress', e => fill(0, e.detail));
+  addEventListener('scanready', () => fill(0, 1));
+  addEventListener('roomprogress', e => fill(1, e.detail));
+  addEventListener('roomready', () => fill(1, 1));
+  EXTRA_ROOMS.forEach((_, x) => addEventListener(`room${x + 2}progress`, e => fill(2 + x, e.detail)));
+}
 
 // Intro: a blank sheet until the first map has drawn, then the montage runs to Tbilisi
 // while the sheet fades away; scrolling waits for it.
 (async () => {
   locked = true;
   if (SCAN_ONLY) {                       // loading screen until the scan module says it is ready
-    const cover = $('cover');
+    // Opening on the room it waits for both scans: the square comes first (the room is loaded after it), then the room.
+    // The screen is only the dark and the step dots (above it), the square's row lighting up as it comes in.
+    const cover = $('cover'), room = OPEN_STEP >= FULL + 1 + SPOTS;
     cover.classList.add('boot');
-    cover.innerHTML = '<div class="boot-in"><h1>Rustaveli</h1><div class="boot-bar"><i></i></div><span>Loading the scan · <b>0</b>%</span></div>';
-    const show = p => { cover.style.setProperty('--p', p); cover.querySelector('b').textContent = Math.round(p * 100); };
-    addEventListener('scanprogress', e => show(e.detail));
+    document.body.classList.add('booting');
     if (!window.scanReady) await new Promise(r => addEventListener('scanready', r, { once: true }));
-    show(1);
+    if (room && !window.roomReady) await new Promise(r => addEventListener('roomready', r, { once: true }));
     await wait(400);
+    document.body.classList.remove('booting');
     cover.classList.add('gone');
     await wait(550);
-    cover.remove();                      // its title must not linger over the first captions
+    cover.remove();
     locked = false;
     return;
   }
@@ -542,14 +618,14 @@ const SCAN = touch ? 'assets/splats/rustaveli_mobile.sog' : 'assets/splats/rusta
 // one buffer as it arrives; the cache gets its own copy streamed to disk alongside. Bump
 // SCAN_VERSION whenever build.sh makes new files.
 const SCAN_VERSION = 'sca103-1';
-async function download(url) {
-  const key = `${url}?v=${SCAN_VERSION}`;
+async function download(url, onProgress = p => progress(.6 * p), version = SCAN_VERSION) {
+  const key = `${url}?v=${version}`;
   const cache = await window.caches?.open('tssr-scan').catch(() => null);
   const hit = await cache?.match(key);
   if (hit) return hit.arrayBuffer();
   const r = await fetch(key);           // versioned, so no HTTP cache can hand back an older scan
-  if (cache) {
-    for (const old of await cache.keys()) if (!old.url.endsWith(key)) cache.delete(old);
+  if (cache) {                          // older versions of this file go; the other scans stay
+    for (const old of await cache.keys()) if (old.url.includes(`${url}?`) && !old.url.endsWith(key)) cache.delete(old);
     cache.put(key, r.clone()).catch(() => {});
   }
   const total = +r.headers.get('content-length') || 0;
@@ -564,31 +640,13 @@ async function download(url) {
       more.set(out.subarray(0, got)); out = more;
     }
     out.set(value, got); got += value.length;
-    progress(.6 * Math.min(1, got / total));
+    onProgress(Math.min(1, got / total));
   }
   return got === out.length ? out.buffer : out.slice(0, got).buffer;
 }
 
 const heights = fetch(`assets/splats/rustaveli_heights.bin?v=${SCAN_VERSION}`).then(r => r.arrayBuffer()).then(b => new Uint8Array(b)).catch(() => null);
-const city = new SplatMesh({ fileBytes: await download(SCAN), fileName: SCAN.split('/').pop(), lod: !touch });
-progress(.6);
-const creep = setInterval(() => progress(shown + (.97 - shown) * .05), 200);
-// The file is in the raw RealityScan/COLMAP frame of scan SCA-103 (−y up, about 0.94 m per unit).
-// Everything below is in gsplat's normalized frame of the earlier scan SCA-102 (z up, 1 unit ≈ 98 m), in
-// which the views were placed: NORM maps raw to that (see tools/splat/README.md), then a quarter turn makes it y-up.
-const NORM = new THREE.Matrix4().set(
-  0.00782547, 0.00120170, -0.00578411, -0.23978075,
-  0.00587534, -0.00258524, 0.00741180, -0.02114386,
-  -0.00061669, -0.00938139, -0.00278339, -0.26418384,
-  0, 0, 0, 1);
-city.matrixAutoUpdate = false;
-city.matrix.makeRotationX(-Math.PI / 2).multiply(NORM);
-scene.add(city);
-await city.initialized;
-city.updateMatrixWorld();
-clearInterval(creep);
-progress(1);
-loadEl.classList.add('done');
+const cityBytes = download(SCAN);   // awaited further down, once the views (and the step dots) are set
 
 // The places in scan coordinates (z up, 1 unit ≈ 110 m), placed by laying the OSM building
 // outlines over a top view of the scan, and how the camera sees each: bearing in the scan's x–y
@@ -620,12 +678,151 @@ for (const s in VIEWS) Object.assign(VIEWS[s], variant(SAVED[s]));
 const world = ([x, y, z]) => new THREE.Vector3(x, z, -y);
 const U_EYE = new THREE.Vector3();
 // Each view also shapes the flight into it (see planFlight): arc, swing and time.
+// roll: the picture turned about the line of sight (clockwise positive, degrees in the file)
+// shift: the picture moved across the screen (shares of its width and height; + right and down), on wide screens
 const rad = v => ({ az: THREE.MathUtils.degToRad(v.az), el: THREE.MathUtils.degToRad(v.el), d: v.d, fov: v.fov,
-  arc: v.arc ?? 0, swing: v.swing ?? 0, time: v.time ?? 1 });
+  arc: v.arc ?? 0, swing: v.swing ?? 0, time: v.time ?? 1, roll: THREE.MathUtils.degToRad(v.roll ?? 0), shift: v.shift ?? [0, 0] });
 const names = window.SCAN_SPOTS;
 const spots = names.map(s => world(VIEWS[s].p));
 // Camera stops, one per scroll step: 0 the overview, then the spots.
 const targets = [world(OVERVIEW.p), ...names.map(s => world(VIEWS[s].at ?? VIEWS[s].p))], views = [rad(OVERVIEW), ...names.map(s => rad(VIEWS[s]))];
+// The room (scan SCA-104) after the last spot: the next stop past the spots. It stands in the same scene, well
+// away from the square and scaled down to its size; only one of the two is ever drawn. Its file is in
+// RealityScan's raw frame; the scan site turns it a half turn about x (y up), and its views are in that frame
+// (ROOM_VIEWS: camera and the point it looks at), the distance in this scene's units.
+// Its stops are the scan site's saved views 6, 7 and 8: sections from far off on a long lens, each with the wall
+// towards the camera cut away (a plane set as the scan site sets it: the box's x axis turned by yaw about y, at a
+// share of the box's reach; what lies on its far side, dot(n, p) > d, is not drawn, with a white line along the
+// cut; it glides from one view's to the next's with the camera) and nothing outside the room's box (ROOM_BOX: from
+// the room's marked objects, a tenth larger, as the scan site makes it; splats larger than 4 % of its diagonal go
+// too, the haze round the walls).
+const ROOM_K = names.length + 1, ROOM_AT = new THREE.Vector3(40, 0, 0), ROOM_S = .05;
+const roomWorld = ([x, y, z]) => new THREE.Vector3(x, y, z).multiplyScalar(ROOM_S).add(ROOM_AT);
+const ROOM_BOX = [[-15.861, -4.955, -26.007], [21.306, 21.709, 27.193]];
+const ROOM_VIEWS = [
+  { pos: [-46.9695, 4.1720, -136.0771], at: [2.8378, 12.1316, -1.3226], fov: 10, yaw: 107, cut: .397, shift: [.051, -.077] },
+  { pos: [-121.7249, 17.3315, 16.3861], at: [5.6510, 11.1589, 2.9747], fov: 10, yaw: 180, cut: .401 },
+  { pos: [82.7152, 6.2340, 53.7857], at: [-0.1909, 8.3567, -5.3218], fov: 10, yaw: -22, cut: .45 },
+];
+const isRoom = k => k >= ROOM_K, roomName = i => i ? `Room ${i + 1}` : 'Room';
+function sectionOf(yaw, at) {           // -> { n, d } in the scan site's frame
+  const r = THREE.MathUtils.degToRad(yaw), n = [Math.cos(r), 0, -Math.sin(r)];
+  const c = ROOM_BOX[0].map((v, i) => (v + ROOM_BOX[1][i]) / 2);
+  let reach = 0;
+  for (let i = 0; i < 8; i++) reach = Math.max(reach, Math.abs([0, 1, 2].reduce((s, a) => s + (ROOM_BOX[i >> a & 1][a] - c[a]) * n[a], 0)));
+  const p = c.map((v, a) => v + n[a] * (at * 2 - 1) * reach);
+  return { n, d: n[0] * p[0] + n[1] * p[1] + n[2] * p[2] };
+}
+const viewOf = (r, s, saved) => {           // a saved view of the scan site (camera, point, lens) -> one of ours
+  const o = r.pos.map((x, a) => x - r.at[a]), d = Math.hypot(...o), deg = THREE.MathUtils.radToDeg;
+  return { p: r.at, az: deg(Math.atan2(-o[2], o[0])), el: deg(Math.asin(o[1] / d)), d: d * s, fov: r.fov, shift: r.shift, ...variant(saved) };
+};
+ROOM_VIEWS.forEach((r, i) => { const view = viewOf(r, ROOM_S, SAVED[roomName(i)]); targets.push(roomWorld(view.p)); views.push(rad(view)); });
+// The rooms after the first: further along the same line, the same half turn and scale, each with stops from the
+// scan site's saved views of it. Nothing is marked in them, so each box is made from its own splats once they are
+// in, as the scan site makes it (see loadExtra). sway: how much of the drift they get.
+const EXTRA = [
+  { name: 'Second room', file: 'assets/splats/room2.sog', version: 'sca106-1', at: new THREE.Vector3(80, 0, 0), sway: .35, views: [   // SCA-106
+    { pos: [-0.4181, 2.4627, -13.0036], at: [3.4499, 4.6563, -2.1766], fov: 24 },
+    { pos: [3.6796, 5.5625, -13.2927], at: [-0.7625, 4.7597, 4.7057], fov: 37 },
+    { pos: [-0.4548, 4.5847, 1.9326], at: [-2.5792, 5.3473, -7.0852], fov: 60 },
+  ] },
+  { name: 'Third room', file: 'assets/splats/room3.sog', version: 'sca105-1', at: new THREE.Vector3(120, 0, 0), sway: 1, views: [   // SCA-105
+    { pos: [9.5406, 7.7134, -0.6433], at: [-7.6444, 2.1832, -5.2086], fov: 81 },
+    { pos: [2.1699, 68.6576, -0.6291], at: [2.4602, 9.74, 0.3889], fov: 24 },
+    { pos: [33.7388, 12.811, -18.9926], at: [2.4032, 8.6942, 0.5712], fov: 20 },
+  ] },
+];
+const extraName = (r, i) => i ? `${r.name} ${i + 1}` : r.name;
+{
+  let k = ROOM_K + ROOM_VIEWS.length;
+  EXTRA.forEach((r, x) => {
+    const v3 = () => dyno.dynoVec3(new THREE.Vector3());
+    Object.assign(r, { k, mesh: null, last: '', rt: window.wipeT[x + 1] >= 1 ? 1 : 0,
+      U: { reveal: dyno.dynoFloat(1), wN: v3(), wT: v3(), wCam: v3(), wPh: dyno.dynoFloat(0), wPx: dyno.dynoFloat(.002),
+        oOn: dyno.dynoFloat(0), oN: v3(), oT: v3(), oCam: v3(), oPh: dyno.dynoFloat(0), oPx: dyno.dynoFloat(.002),
+        tOn: dyno.dynoFloat(0), tX: v3(), tY: v3(), tZ: v3(), tP: v3(), tQ: dyno.dynoVec4(new THREE.Vector4(0, 0, 0, 1)), tK: dyno.dynoFloat(1) } });
+    r.views.forEach((v, i) => {
+      const view = viewOf(v, ROOM_S, SAVED[extraName(r, i)]);
+      targets.push(new THREE.Vector3(...view.p).multiplyScalar(ROOM_S).add(r.at)); views.push(rad(view));
+    });
+    k += r.views.length;
+  });
+}
+const extraOf = k => EXTRA.find(r => k >= r.k && k < r.k + r.views.length);
+// which scan a stop shows: 0 the square, 1 the first room, 2.. the rooms after it
+const sceneOf = k => k < ROOM_K ? 0 : k < EXTRA[0].k ? 1 : 2 + EXTRA.indexOf(extraOf(k));
+// how far the way into stop k has got (1: it is not the way in, or it is done)
+const settling = k => k === ROOM_K ? rt : extraOf(k)?.k === k ? extraOf(k).rt : 1;
+// rt: how far the scroll has got from the last spot into the room (0..1, eased after window.wipeT[0]; see the
+// loop); each next room has its own (EXTRA[x].rt).
+// Opening on the room the bulbs are already up and the room appears from them.
+let rt = window.wipeT[0] >= 1 ? .45 : 0, roomSettled = 0;
+
+// The bulbs' lattice on a W x H screen (see bulbs): the first room's camera at rest, the lattice's step and origin.
+const BULB_GRID = { p: .004435, ox: .003326, oy: .001848 };
+function latticeFrame(W, H) {
+  const v = views[ROOM_K], rc = camera.clone();
+  rc.fov = Math.min(v.fov * (W > H ? 1 : 1.4), Math.max(70, v.fov));
+  rc.aspect = W / H;
+  if (W > H) rc.setViewOffset(W, H, -W * (.12 + v.shift[0]), -H * v.shift[1], W, H); else rc.clearViewOffset();
+  rc.updateProjectionMatrix();
+  rc.position.set(Math.cos(v.el) * Math.cos(v.az), Math.sin(v.el), -Math.cos(v.el) * Math.sin(v.az)).multiplyScalar(v.d).add(targets[ROOM_K]);
+  rc.lookAt(targets[ROOM_K]);
+  rc.rotateZ(v.roll);
+  rc.updateMatrixWorld();
+  const f = H / 2 / Math.tan(THREE.MathUtils.degToRad(rc.fov) / 2), o = targets[ROOM_K].clone().project(rc);
+  return { rc, P: BULB_GRID.p * f, x0: (o.x + 1) / 2 * W + BULB_GRID.ox * f, y0: (1 - o.y) / 2 * H + BULB_GRID.oy * f };
+}
+// The step dots, on cells of the same lattice, along its diagonals (rising to the right, as the cut runs): the
+// square's steps on one, each room's views on the next diagonals along. On wide screens in the bottom right
+// corner, where the bulbs of the way in start; on tall ones in the top right. Set as soon as the views are known
+// (they show the downloads), again when the screen changes size.
+let stepDotsKey = '';
+function placeStepDots(W, H) {
+  const key = `${W}x${H}`;
+  if (key === stepDotsKey || !W) return;
+  stepDotsKey = key;
+  const { P, x0, y0 } = latticeFrame(W, H), box = document.getElementById('dots'), ds = [...box.children];
+  const rooms = [ROOM_VIEWS.length, ...EXTRA.map(r => r.views.length)], rows = [ds.length - rooms.reduce((a, b) => a + b, 0), ...rooms];
+  // as far into the corner as the cells go: the rightmost dot and the lowest ones (each row's first) a little way
+  // in from the edges
+  const edge = Math.max(8, P * .6), right = Math.max(...rows.map((c, g) => 2 * g + c - 1));
+  let i = Math.floor((W - edge - x0) / P) - right, j = Math.floor(((W > H ? H - edge : (first + 1) * P) - y0) / P);
+  if ((i + j) & 1) j--;
+  Object.assign(box.style, { left: '0px', top: '0px', transform: 'none' });
+  box.style.setProperty('--zz', '0px');
+  ds.forEach((d, n) => {
+    // the square's steps, then each room's on the next diagonal along (two cells right, its first one level with
+    // the square's first)
+    let g = 0, m = n;
+    while (m >= rows[g]) m -= rows[g++];
+    const [a, b] = [i + 2 * g + m, j - m];
+    Object.assign(d.style, { position: 'absolute', left: `${x0 + a * P - 2.5}px`, top: `${y0 + b * P - 2.5}px` });
+  });
+}
+placeStepDots(innerWidth, innerHeight);
+addEventListener('resize', () => placeStepDots(innerWidth, innerHeight));
+
+const city = new SplatMesh({ fileBytes: await cityBytes, fileName: SCAN.split('/').pop(), lod: !touch });
+progress(.6);
+const creep = setInterval(() => progress(shown + (.97 - shown) * .05), 200);
+// The file is in the raw RealityScan/COLMAP frame of scan SCA-103 (−y up, about 0.94 m per unit).
+// Everything below is in gsplat's normalized frame of the earlier scan SCA-102 (z up, 1 unit ≈ 98 m), in
+// which the views were placed: NORM maps raw to that (see tools/splat/README.md), then a quarter turn makes it y-up.
+const NORM = new THREE.Matrix4().set(
+  0.00782547, 0.00120170, -0.00578411, -0.23978075,
+  0.00587534, -0.00258524, 0.00741180, -0.02114386,
+  -0.00061669, -0.00938139, -0.00278339, -0.26418384,
+  0, 0, 0, 1);
+city.matrixAutoUpdate = false;
+city.matrix.makeRotationX(-Math.PI / 2).multiply(NORM);
+scene.add(city);
+await city.initialized;
+city.updateMatrixWorld();
+clearInterval(creep);
+progress(1);
+loadEl.classList.add('done');
 const center = world([-0.4, -0.1, -0.2]);           // the square: the reveal grows from here
 const START = views[0];
 { // where the overview camera stands (without its drift): splats round it are dropped, see below
@@ -643,22 +840,49 @@ spotEls.forEach((el, j) => el.querySelector('i').addEventListener('click', () =>
 //  wave    – when a spot takes the focus an (unseen) sphere grows out of it: a bright seam where
 //            it cuts the scan; inside the sphere the scan keeps its colour (up to a radius),
 //            outside it the scan is black and white.
+// The wipe on the way into the room: a plane through the camera, so on screen it is one line however deep what it
+// cuts lies, everything on one side of it gone (the square) or shown (the room). Its edge is ragged: the side is
+// pushed by a sum of three waves along the line, the same numbers in the shaders and for the bulbs (wipeSide).
+// The line runs at an angle (rising to the right) and crosses the screen from past its bottom right corner (f 0)
+// to past its top left one (f 1). -> uniforms for the shaders and the side of any screen point.
+const WIPE_A = .06, WIPE_TILT = [50, 80];
+const wipeWave = (s, ph) => Math.sin(s * 9 + ph + 1.3) * .5 + Math.sin(s * 23 - ph * 1.7 + .4) * .3 + Math.sin(s * 51 + ph * 2.3 + 2.1) * .2;
+const WIPE_GLSL = `
+  float wipeSide(vec3 p, vec3 cam, vec3 N, vec3 T, float ph) {
+    vec3 d = normalize(p - cam);
+    float s = dot(d, T);
+    return dot(d, N) + ${WIPE_A} * (sin(s * 9.0 + ph + 1.3) * 0.5 + sin(s * 23.0 - ph * 1.7 + 0.4) * 0.3 + sin(s * 51.0 + ph * 2.3 + 2.1) * 0.2);
+  }`;
+function wipeAt(f, deg, ph, cam, W, H) {
+  const th = THREE.MathUtils.degToRad(deg), x = W * (1 - (-.04 + 1.08 * f)), y = H * (1 - (-.04 + 1.08 * f));
+  const d = [Math.cos(th), -Math.sin(th)], n = [-Math.sin(th), -Math.cos(th)];   // along the line; up off it
+  const ray = (px, py) => new THREE.Vector3(px / W * 2 - 1, 1 - py / H * 2, .5).unproject(cam).sub(cam.position).normalize();
+  const N = ray(x, y).cross(ray(x + d[0] * 100, y + d[1] * 100)).normalize();
+  if (ray(x - n[0] * 60, y - n[1] * 60).dot(N) > 0) N.negate();   // the wiped side (below right) is behind it
+  const T = new THREE.Vector3().crossVectors(N, new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 2)).normalize();
+  const fpx = H / 2 / Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2);
+  // side(x, y): how far past the line a screen point is, in pixels (> 0: not wiped yet)
+  const side = (px, py) => { const r = ray(px, py); return (r.dot(N) + WIPE_A * wipeWave(r.dot(T), ph)) * fpx; };
+  return { N, T, cam: cam.position.clone(), ph, side, px: 1 / fpx };
+}
 const U = {
   focus: dyno.dynoVec3(center.clone()), focusAmt: dyno.dynoFloat(0), wave: dyno.dynoFloat(99),
   reveal: dyno.dynoFloat(0), dust: dyno.dynoFloat(0), eye: dyno.dynoVec3(U_EYE), cut: dyno.dynoFloat(0),
+  wOn: dyno.dynoFloat(0), wN: dyno.dynoVec3(new THREE.Vector3()), wT: dyno.dynoVec3(new THREE.Vector3()),
+  wCam: dyno.dynoVec3(new THREE.Vector3()), wPh: dyno.dynoFloat(0), wPx: dyno.dynoFloat(.002), fade: dyno.dynoFloat(1),
 };
 const SPAN = 1.4, f = v => v.toFixed(4);     // across the places, in scan units
 const WAVE_SPEED = .45;                  // sphere radius growth, spans per second
 const fx = new dyno.Dyno({
   inTypes: { gsplat: dyno.Gsplat, focus: 'vec3', focusAmt: 'float', wave: 'float',
-    reveal: 'float', dust: 'float', eye: 'vec3', cut: 'float' },
+    reveal: 'float', dust: 'float', eye: 'vec3', cut: 'float', wOn: 'float', wN: 'vec3', wT: 'vec3', wCam: 'vec3', wPh: 'float', wPx: 'float', fade: 'float' },
   outTypes: { gsplat: dyno.Gsplat },
   globals: () => [`
     float fxHash(int i) {
       uint x = uint(i);
       x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16;
       return float(x) / 4294967295.0;
-    }`],
+    }` + WIPE_GLSL],
   statements: ({ inputs: I, outputs: O }) => `
     ${O.gsplat} = ${I.gsplat};
     vec3 p = ${O.gsplat}.center;
@@ -700,6 +924,18 @@ const fx = new dyno.Dyno({
     // Overview: the camera hangs low next to a tree; splats this close to it are dropped.
     a *= smoothstep(${I.cut} * 0.6, ${I.cut}, length(p - ${I.eye}));
 
+    // The wipe on the way into the room (see wipeAt): what it has passed is gone, a white line along its edge.
+    if (${I.wOn} > 0.5) {
+      float sy = wipeSide(p, ${I.wCam}, ${I.wN}, ${I.wT}, ${I.wPh});
+      if (sy < 0.0) { a = 0.0; sc = vec3(0.0); }
+      else {
+        float sl = exp(-pow(sy / (${I.wPx} * 2.0), 2.0));   // a faint line two pixels wide on any lens
+        c = mix(c, ACC, sl * 0.3);
+        sc = max(sc, vec3(length(p - ${I.wCam}) * ${I.wPx} * 0.5 * sl));
+      }
+    }
+    a *= ${I.fade};
+
     float d = clamp(${I.dust} * 2.0 - h, 0.0, 1.0);
     p += vec3(sin(h * 41.0) * 0.6 + 0.8, 1.6, cos(h * 73.0) * 0.6) * d * d * 0.35;
     sc *= 1.0 - d * 0.75;
@@ -717,7 +953,8 @@ city.updateGenerator();
 let fxK = -1, enterAt = -1e9, leaveAt = -1e9, spotAt = -1e9, prevSpotAt = -1e9, pendingK = -1, lastSig = '', lastFx = -1e9;
 function effects(t, k, dt) {
   if (k !== fxK) {
-    if (fxK < 0 && k >= 0) { enterAt = t; spotAt = -1e9; }   // first spot: no wave, the reveal is enough
+    // first spot: no wave, the reveal is enough (back out of the room the square is simply there: no reveal)
+    if (fxK < 0 && k >= 0) { enterAt = rt > 0 ? t - 1e6 : t; spotAt = -1e9; }
     else if (k < 0) leaveAt = t;
     // The wave and the colour wait for the camera: they start as it settles into the new view, so the
     // wave is seen, not spent on the way.
@@ -736,7 +973,7 @@ function effects(t, k, dt) {
   U.focusAmt.value += ((k > 0 && t - enterAt > 3000 ? 1 : 0) - U.focusAmt.value) * (1 - Math.exp(-dt * .0015));
   // Re-run the per-splat effects only while something animates; a still scan costs nothing extra.
   const sig = [U.reveal.value, U.dust.value, U.focusAmt.value.toFixed(3), U.wave.value < 3 ? U.wave.value : 3,
-    U.cut.value.toFixed(3), k].join();
+    U.cut.value.toFixed(3), k, U.wOn.value, U.wN.value.x.toFixed(4), U.wN.value.y.toFixed(4), U.wPh.value.toFixed(3), U.fade.value.toFixed(3)].join();
   // Phones: at most 8 times a second, so the reveal and the waves leave the GPU room for the page.
   if (sig !== lastSig && (!touch || t - lastFx > 120)) { lastSig = sig; lastFx = t; city.updateVersion(); }
 }
@@ -744,7 +981,8 @@ function effects(t, k, dt) {
 // Camera: starts on the overview, then flies from place to place, each seen from its own side,
 // height and lens; in between it drifts slowly. The focus plane follows the place.
 const aim = center.clone(), dir = new THREE.Vector3(), tmp = new THREE.Vector3();
-let camFov = START.fov, focal = 1, shownAt = -1e9, lastW = 0, lastH = 0;
+let roomPass = false;
+let camFov = START.fov, camRoll = 0, camShift = [0, 0], focal = 1, shownAt = -1e9, lastW = 0, lastH = 0;
 
 // Dragging the scan orbits the camera round the spot in focus. On touch a gesture that starts up or
 // down is a swipe to the next slide; one that starts sideways orbits both ways. The offset stays after release and eases back
@@ -805,7 +1043,7 @@ function bezier(t, out) {
 }
 function planFlight(v, target) {
   const [p0, p1, p2, p3] = fly.p;
-  p0.copy(camera.position); fly.aim.copy(aim); fly.t = 0; fly.fov0 = camFov;
+  p0.copy(camera.position); fly.aim.copy(aim); fly.t = 0; fly.fov0 = camFov; fly.roll0 = camRoll; fly.shift0 = camShift.slice();
   restOf(v, target, p3);
   // Between far views the camera keeps the point it looks at in view. Into or out of a near view (TSSR)
   // looking at it would whip the camera round, so there it turns evenly the whole way instead, heading
@@ -835,28 +1073,47 @@ function place(t, k, dt) {
   if (w !== lastW || h !== lastH) {
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
-    // Wide screens: nudge the picture right so the caption on the left does not cover it.
-    if (w > h) camera.setViewOffset(w, h, -w * .12, 0, w, h); else camera.clearViewOffset();
     camera.updateProjectionMatrix();
     lastW = w; lastH = h;
   }
   const v = k >= 0 ? views[k] : START, target = k >= 0 ? targets[k] : center;
-  if (k !== dragK) { yawTo = pitchTo = 0; heldTo = 0; dragK = k; planFlight(v, target); }
+  if (k !== dragK) {
+    const cut = sceneOf(k) !== sceneOf(dragK), round = !cut && sceneOf(k) === 1;   // from one scan to another: a cut
+    yawTo = pitchTo = 0; heldTo = 0; dragK = k; planFlight(v, target);
+    if (cut) { fly.t = 1e9; yaw = pitch = 0; camFov = Math.min(v.fov * (w > h ? 1 : 1.4), Math.max(70, v.fov)); focal = v.d; camRoll = v.roll; camShift = v.shift.slice(); }
+    // from one view of the room to another: round it, at the distance easing from one view's to the other's
+    fly.orbit = null;
+    if (round) {
+      const o = camera.position.clone().sub(fly.aim), d = o.length();
+      fly.orbit = { az: Math.atan2(-o.z, o.x), el: Math.asin(o.y / d), d };
+    }
+  }
   // Once the visitor takes the camera the drift and bob stop, so nothing but the drag moves the view.
-  if (!heldTo) swayT += dt;            // the drift's clock stops (without a jump) while held
+  // the drift's clock stops (without a jump) while held, and from one room to the next while the next is drawn in
+  // this camera (moving it would make the next room move after it a frame late: it shook)
+  if (!heldTo && !roomPass) swayT += dt;
   const ease = 1 - Math.exp(-dt * .0016);
   fly.t += dt;
   const u = Math.min(1, fly.t / fly.dur), e = ease5(u);
   aim.lerpVectors(fly.aim, target, e);
   // Portrait: a wider lens instead of stepping back, which would put the camera where the drone never flew.
-  const fov = Math.min(v.fov * (w > h ? 1 : 1.4), 70);
+  const fov = Math.min(v.fov * (w > h ? 1 : 1.4), Math.max(70, v.fov));
   camFov = u < 1 ? fly.fov0 + (fov - fly.fov0) * e : camFov + (fov - camFov) * ease;
   camera.fov = camFov;
+  // Wide screens: the picture nudged right so the caption on the left does not cover it, and by the view's own shift
+  // (eased with the flight).
+  camShift = u < 1 ? fly.shift0.map((s, a) => s + (v.shift[a] - s) * e) : v.shift;
+  if (w > h) camera.setViewOffset(w, h, -w * (.12 + camShift[0]), -h * camShift[1], w, h); else camera.clearViewOffset();
   camera.updateProjectionMatrix();
   // The overview is one fixed frame (it hangs low between roofs, any drift shows haze or ground): no sway there.
   // The drift sets in only once the camera has arrived, from standstill over four seconds (an eased ramp,
   // so the camera does not lurch from the stop into the drift).
-  swayAmt = k === 0 || EDIT ? 0 : THREE.MathUtils.smootherstep(fly.t - fly.dur, 0, 4000);
+  // The room is reached by a cut: its drift starts once the transition is over (the bulbs must sit on the wall's
+  // lights until then), and on its long lens it is kept as small on screen as elsewhere.
+  swayAmt = k === 0 || EDIT || settling(k) < 1 ? 0
+    : THREE.MathUtils.smootherstep(isRoom(k) ? Math.min(t - roomSettled, fly.t - fly.dur) : fly.t - fly.dur, 0, 4000);
+  // (until the way in is over it stands still: no drift to pick up, so no jerk as it begins)
+  if (isRoom(k)) { if (settling(k) < 1) swayT = 0; swayAmt *= Math.min(1, v.fov / 40) * (extraOf(k)?.sway ?? 1); }
   const az = v.az + Math.sin(swayT * .00012) * .1 * swayAmt, el = v.el + Math.sin(swayT * .0002) * .03 * swayAmt;
   dir.set(Math.cos(el) * Math.cos(az), Math.sin(el), -Math.cos(el) * Math.sin(az));
   const ue = 1 - Math.exp(-dt * .012);
@@ -865,25 +1122,33 @@ function place(t, k, dt) {
   off.copy(dir).multiplyScalar(v.d).applyAxisAngle(UP, yaw);
   side.crossVectors(off, UP).normalize();
   off.applyAxisAngle(side, pitch);
-  if (u < 1) {
+  if (u < 1 && fly.orbit) {
+    const o = fly.orbit, oa = o.az + wrap(v.az - o.az) * e, oe = o.el + (v.el - o.el) * e;
+    camera.position.set(Math.cos(oe) * Math.cos(oa), Math.sin(oe), -Math.cos(oe) * Math.sin(oa)).multiplyScalar(o.d + (v.d - o.d) * e).add(aim);
+    camera.lookAt(aim);
+  }
+  else if (u < 1) {
     bezier(e, camera.position);
     // Halfway through the turn it looks further down, at the street and the houses, not at the horizon.
-    const dip = .6 * Math.sin(Math.PI * e);
+    const dip = sceneOf(k) === 0 ? .6 * Math.sin(Math.PI * e) : 0;
     if (fly.even) camera.rotation.set(fly.pitch0 + (fly.pitch3 - fly.pitch0) * e - dip, fly.yaw0 + wrap(fly.yaw3 - fly.yaw0) * e, 0, 'YXZ');
     else camera.lookAt(aim);
   }
   else { camera.position.copy(aim).add(off); camera.lookAt(aim); }
+  camRoll = u < 1 ? fly.roll0 + (v.roll - fly.roll0) * e : v.roll;
+  if (!(u < 1 && fly.even)) camera.rotateZ(camRoll);
   camera.updateMatrixWorld();          // the dots are projected before render: use this frame's camera
   focal += (camera.position.distanceTo(target) - focal) * ease;
   spark.focalDistance = focal;
   // Depth of field swells every splat, so phones go without it.
-  spark.apertureAngle = touch ? 0 : k > 0 ? .012 : k === 0 ? .008 : 0;   // overview: just enough to soften the near roof
+  // (the room's section is a sharp drawing: none there)
+  spark.apertureAngle = touch || isRoom(k) ? 0 : k > 0 ? .012 : k === 0 ? .008 : 0;   // overview: just enough to soften the near roof
 }
 
 function drawSpots(k) {
   spotEls.forEach((el, j) => {
     tmp.copy(spots[j]).project(camera);
-    const vis = tmp.z < 1 && Math.abs(tmp.x) < 1.1 && Math.abs(tmp.y) < 1.1;
+    const vis = !isRoom(k) && !(rt > 0) && tmp.z < 1 && Math.abs(tmp.x) < 1.1 && Math.abs(tmp.y) < 1.1;
     el.style.display = vis ? '' : 'none';
     el.style.transform = `translate(${(tmp.x + 1) / 2 * lastW}px, ${(1 - tmp.y) / 2 * lastH}px)`;
     el.classList.toggle('active', j === k - 1);
@@ -899,7 +1164,7 @@ const editor = (() => {
   if (!EDIT) return null;
   const deg = THREE.MathUtils.radToDeg, r4 = x => Math.round(x * 1e4) / 1e4, r1 = x => Math.round(x * 10) / 10;
   const scanOf = v => [r4(v.x), r4(-v.z), r4(v.y)];
-  const nameOf = k => k === 0 ? 'Overview' : names[k - 1];
+  const nameOf = k => k === 0 ? 'Overview' : extraOf(k) ? extraName(extraOf(k), k - extraOf(k).k) : isRoom(k) ? roomName(k - ROOM_K) : names[k - 1];
   const panel = document.createElement('div');
   panel.style.cssText = 'position:fixed;right:16px;top:60px;z-index:50;width:260px;padding:14px;background:rgba(10,10,10,.82);' +
     'color:#fff;font:12px/1.5 system-ui,sans-serif;border-radius:10px;backdrop-filter:blur(6px)';
@@ -911,7 +1176,7 @@ const editor = (() => {
     <div style="font-weight:600;font-size:13px" data-name></div><div data-pose style="opacity:.7"></div>
     ${slider('fov', 'Lens, °', 10, 80, 1)}${slider('arc', 'Arc height', 0, 2, .05)}${slider('swing', 'Swing out', 0, 1, .05)}${slider('time', 'Flight time ×', .5, 3, .1)}
     <div>${button('dot', 'Move dot')}${button('aim', 'Move aim')}${button('replay', 'Replay flight')}${button('save', 'Save')}</div>
-    <div data-msg style="margin-top:8px;opacity:.8">Drag: turn · wheel: closer / further · buttons above: place</div>`;
+    <div data-msg style="margin-top:8px;opacity:.8">Drag: turn · wheel: closer / further · buttons above: place<br>Room: drag moves it, Shift+drag turns, Alt+drag rotates, click puts a bulb</div>`;
   document.body.append(panel);
   const $e = q => panel.querySelector(q);
   let mode = null, drag = null;
@@ -921,7 +1186,7 @@ const editor = (() => {
     const kk = k(); if (kk < 0) return;
     const v = views[kk];
     $e('[data-name]').textContent = nameOf(kk);
-    $e('[data-pose]').textContent = `bearing ${r1(deg(v.az))}° · height ${r1(deg(v.el))}° · distance ${r4(v.d)}`;
+    $e('[data-pose]').textContent = `bearing ${r1(deg(v.az))}° · height ${r1(deg(v.el))}° · distance ${r4(v.d)}${v.roll ? ` · turned ${r1(deg(v.roll))}°` : ''}`;
     for (const key of ['fov', 'arc', 'swing', 'time']) { $e(`[data-k="${key}"]`).value = v[key]; $e(`[data-v="${key}"]`).textContent = v[key]; }
     panel.querySelectorAll('[data-b]').forEach(b => b.style.background = b.dataset.b === mode ? '#c8921a' : '#333');
     panel.querySelectorAll('[data-go]').forEach(b => b.style.background = +b.dataset.go === kk ? '#c8921a' : '#333');
@@ -932,6 +1197,7 @@ const editor = (() => {
   });
   // The first wall or roof along the ray under the cursor (roof grid), a step inside so it sits on the surface.
   function pick(e) {
+    if (isRoom(k())) return null;    // the roof grid is the square's only
     const rect = canvas.getBoundingClientRect();
     const ray = new THREE.Raycaster();
     ray.setFromCamera(new THREE.Vector2((e.clientX - rect.left) / rect.width * 2 - 1, -(e.clientY - rect.top) / rect.height * 2 + 1), camera);
@@ -959,16 +1225,19 @@ const editor = (() => {
       // On a phone (or with ?phone) only the phone variants are written; the computer views stay as saved.
       const out = {};
       for (let i = 0; i < views.length; i++) {
-        const v = views[i], at = scanOf(targets[i]), name = nameOf(i);
-        const p = i === 0 ? at : scanOf(spots[i - 1]);
+        const v = views[i], name = nameOf(i);
+        // the room's point is kept in its own scan's frame (see ROOM_VIEWS)
+        const at = isRoom(i) ? targets[i].clone().sub(extraOf(i)?.at ?? ROOM_AT).divideScalar(ROOM_S).toArray().map(r4) : scanOf(targets[i]);
+        const p = i === 0 || isRoom(i) ? at : scanOf(spots[i - 1]);
         const view = { p, ...(p.join() !== at.join() ? { at } : {}), az: r1(deg(v.az)), el: r1(deg(v.el)), d: r4(v.d),
-          fov: v.fov, arc: v.arc, swing: v.swing, time: v.time };
+          fov: v.fov, arc: v.arc, swing: v.swing, time: v.time, ...(v.roll ? { roll: Math.round(deg(v.roll) * 100) / 100 } : {}) };
         const { phone, ...base } = SAVED[name] ?? {};
         out[name] = PHONE ? { ...(SAVED[name] ? base : view), phone: view } : { ...view, ...(phone ? { phone } : {}) };
       }
       const body = JSON.stringify(out, null, 2);
       const ok = await fetch('save-views', { method: 'POST', body }).then(r => r.ok).catch(() => false);
-      if (ok) msg('Saved to assets/splats/scan_views.json');
+      if (ok && kk === ROOM_K) msg(await bulbs.save() ? 'Saved the views and the bulbs (room_bulbs.json)' : 'Views saved, the bulbs not');
+      else if (ok) msg('Saved to assets/splats/scan_views.json');
       else {
         const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([body])), download: 'scan_views.json' });
         a.click(); msg('No editor server: downloaded scan_views.json — put it in assets/splats/');
@@ -980,8 +1249,23 @@ const editor = (() => {
     down(e) { drag = { x: e.clientX, y: e.clientY, moved: false }; canvas.setPointerCapture(e.pointerId); },
     move(e) {
       if (!drag) return;
-      const dx = e.clientX - drag.x, dy = e.clientY - drag.y, v = views[k()];
+      const dx = e.clientX - drag.x, dy = e.clientY - drag.y, kk = k(), v = views[kk];
       drag.moved = drag.moved || Math.abs(dx) + Math.abs(dy) > 3;
+      // The room's views are set against the bulbs' lattice, which stays put on screen: a drag moves the room
+      // under it (the point looked at slides, the picture follows the mouse pixel for pixel), with Shift it turns
+      // round that point by as little, with Alt it turns the picture about its middle (left: anticlockwise); the
+      // wheel takes it closer or further (see wheel).
+      if (isRoom(kk)) {
+        const px = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) / lastH;   // radians (at unit distance) per pixel
+        if (e.altKey) v.roll += dx * .001;
+        else if (e.shiftKey) { v.az -= dx * px; v.el = THREE.MathUtils.clamp(v.el + dy * px, -1.45, 1.45); }
+        else {
+          const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0), up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+          targets[kk].addScaledVector(right, -dx * px * v.d).addScaledVector(up, dy * px * v.d);
+        }
+        drag.x = e.clientX; drag.y = e.clientY;
+        return sync();
+      }
       v.az -= dx * .005;
       v.el = THREE.MathUtils.clamp(v.el + dy * .004, -1.45, 1.45);
       drag.x = e.clientX; drag.y = e.clientY;
@@ -989,7 +1273,8 @@ const editor = (() => {
     },
     up(e) {
       const kk = k();
-      if (drag && !drag.moved && mode && kk >= 0) {
+      if (drag && !drag.moved && kk === ROOM_K) { bulbs.toggle(e.clientX, e.clientY); msg('Click a cell: bulb on / off · Save writes them'); }
+      else if (drag && !drag.moved && mode && kk >= 0) {
         const p = pick(e);
         if (!p) msg('Nothing under the cursor');
         else if (mode === 'dot' && kk > 0) { spots[kk - 1].copy(p); msg('Dot moved'); }
@@ -1003,7 +1288,11 @@ const editor = (() => {
       }
       drag = null; sync();
     },
-    wheel(e) { const v = views[k()]; v.d = THREE.MathUtils.clamp(v.d * Math.exp(e.deltaY * .001), .02, 6); sync(); },
+    wheel(e) {
+      const v = views[k()];
+      v.d = isRoom(k()) ? v.d * Math.exp(e.deltaY * .0002) : THREE.MathUtils.clamp(v.d * Math.exp(e.deltaY * .001), .02, 6);   // the room: finely
+      sync();
+    },
     sync,
   };
 })();
@@ -1021,6 +1310,317 @@ document.body.classList.add('scan-ready');
 window.scanReady = true;
 dispatchEvent(new Event('scanready'));
 
+// The room: downloaded only once the square is in, so the two never compete for the line; it is decoded
+// meanwhile and waits hidden. The way in is scrolled through (rt, see the loop and bulbs below). While it is
+// not in yet the caption shows how far it has got.
+const ROOM_FILE = 'assets/splats/room1.sog', ROOM_VERSION = 'sca104-1';
+const RU = { reveal: dyno.dynoFloat(0), cutN: dyno.dynoVec3(new THREE.Vector3()), cutD: dyno.dynoFloat(0),
+  oOn: dyno.dynoFloat(0), oN: dyno.dynoVec3(new THREE.Vector3()), oT: dyno.dynoVec3(new THREE.Vector3()), oCam: dyno.dynoVec3(new THREE.Vector3()), oPh: dyno.dynoFloat(0), oPx: dyno.dynoFloat(.002),
+  wN: dyno.dynoVec3(new THREE.Vector3()), wT: dyno.dynoVec3(new THREE.Vector3()), wCam: dyno.dynoVec3(new THREE.Vector3()), wPh: dyno.dynoFloat(0),
+  wPx: dyno.dynoFloat(.002) };
+let room = null, roomLast = '', secK = -1, secFrom = null;
+const secNow = { yaw: 0, cut: 0 };
+// From the room's splats, once: the lights of the string on its wall (bright yellow, small), in world space
+// (the room's bulbs start from them while none are saved, see bulbs).
+let roomLights = [];
+function readRoom(m) {
+  const src = m.packedSplats?.numSplats ? m.packedSplats : m.splats?.lodSplats;
+  if (!src) return;
+  const diag = Math.hypot(...ROOM_BOX[1].map((v, i) => v - ROOM_BOX[0][i]));
+  const [lo, hi] = ROOM_BOX, cut = sectionOf(ROOM_VIEWS[0].yaw, ROOM_VIEWS[0].cut), n = cut.n, w = new THREE.Vector3();
+  src.forEachSplat((i, c, s, q, o, col) => {
+    const x = c.x, y = -c.y, z = -c.z;   // the scan site's frame
+    if (x < lo[0] || y < lo[1] || z < lo[2] || x > hi[0] || y > hi[1] || z > hi[2]) return;
+    if (cut.d - (n[0] * x + n[1] * y + n[2] * z) < 0 || Math.max(s.x, s.y, s.z) > .04 * diag) return;
+    if (o > .3 && col.r > .7 && col.g > .5 && col.b < .6 && col.r - col.b > .25 && col.r + col.g > 1.45 && Math.max(s.x, s.y, s.z) < .1)
+      roomLights.push(w.copy(c).applyMatrix4(m.matrix).clone());
+  });
+}
+const roomLoad = (async () => {
+  const kicker = () => document.querySelector('.ph:last-of-type .kicker');
+  const said = p => {
+    dispatchEvent(new CustomEvent('roomprogress', { detail: p }));   // the loading screen, when the page opens on the room
+    if (isRoom(window.scanFocus) && !room) kicker().textContent = `Loading the room · ${Math.round(p * 100)}%`;
+  };
+  const bytes = await download(ROOM_FILE, p => said(.9 * p), ROOM_VERSION);
+  said(.95);
+  const m = new SplatMesh({ fileBytes: bytes, fileName: 'room1.sog', lod: false });   // no level of detail: its swaps hold Spark's last sorted set for frames, which blinked at the cuts between rooms
+  m.matrixAutoUpdate = false;
+  m.matrix.makeTranslation(ROOM_AT.x, ROOM_AT.y, ROOM_AT.z).multiply(new THREE.Matrix4().makeScale(ROOM_S, -ROOM_S, -ROOM_S));
+  m.visible = false;
+  scene.add(m);
+  await m.initialized;
+  m.updateMatrixWorld();
+  const reveal = new dyno.Dyno({
+    inTypes: { gsplat: dyno.Gsplat, reveal: 'float', cutN: 'vec3', cutD: 'float', wN: 'vec3', wT: 'vec3', wCam: 'vec3', wPh: 'float', wPx: 'float',
+      oOn: 'float', oN: 'vec3', oT: 'vec3', oCam: 'vec3', oPh: 'float', oPx: 'float' },
+    outTypes: { gsplat: dyno.Gsplat },
+    globals: () => [WIPE_GLSL],
+    statements: ({ inputs: I, outputs: O }) => `
+      ${O.gsplat} = ${I.gsplat};
+      vec3 sc = ${O.gsplat}.scales;
+      vec3 c = ${O.gsplat}.rgba.rgb;
+      float a = ${O.gsplat}.rgba.a;
+      // the box and the cut, in the scan site's frame of the room
+      vec3 q = (${O.gsplat}.center - vec3(${f(ROOM_AT.x)}, ${f(ROOM_AT.y)}, ${f(ROOM_AT.z)})) / ${f(ROOM_S)};
+      const vec3 LO = vec3(${ROOM_BOX[0].map(f)}), HI = vec3(${ROOM_BOX[1].map(f)});
+      float k = ${I.cutD} - dot(${I.cutN}, q);
+      bool gone = any(lessThan(q, LO)) || any(greaterThan(q, HI)) || max(sc.x, max(sc.y, sc.z)) / ${f(ROOM_S)} > ${f(.04 * Math.hypot(...ROOM_BOX[1].map((v, i) => v - ROOM_BOX[0][i])))} || k < 0.0;
+      if (k >= 0.0 && k < ${f(.004 * Math.hypot(...ROOM_BOX[1].map((v, i) => v - ROOM_BOX[0][i])))}) c = mix(c, vec3(1.0), 0.85);
+      // shown by the wipe (reveal 1: under way): what it has passed is there, a white line along its edge
+      if (${I.reveal} > 0.5) {
+        float sy = wipeSide(${O.gsplat}.center, ${I.wCam}, ${I.wN}, ${I.wT}, ${I.wPh});
+        float line = exp(-pow(sy / (${I.wPx} * 2.0), 2.0));   // two pixels wide, as the square's
+        if (sy > 0.0) { a = 0.0; sc = vec3(0.0); }
+        c = mix(c, vec3(1.0), line * 0.3);   // a faint seam
+        sc = max(sc, vec3(length(${O.gsplat}.center - ${I.wCam}) * ${I.wPx} * 0.5 * line));
+        a = max(a, line * 0.3);
+      }
+      // wiped away again on the way into the second room
+      if (${I.oOn} > 0.5) {
+        float so = wipeSide(${O.gsplat}.center, ${I.oCam}, ${I.oN}, ${I.oT}, ${I.oPh});
+        float ol = exp(-pow(so / (${I.oPx} * 2.0), 2.0));
+        if (so < 0.0) { a = 0.0; sc = vec3(0.0); }
+        else { c = mix(c, vec3(1.0), ol * 0.3); sc = max(sc, vec3(length(${O.gsplat}.center - ${I.oCam}) * ${I.oPx} * 0.5 * ol)); }
+      }
+      if (gone) { sc = vec3(0.0); a = 0.0; }   // after the reveal's line, which would light them up again
+      ${O.gsplat}.scales = sc;
+      ${O.gsplat}.rgba = vec4(clamp(c, 0.0, 1.0), a);`.trim().split('\n'),
+  });
+  m.worldModifier = dyno.dynoBlock({ gsplat: dyno.Gsplat }, { gsplat: dyno.Gsplat },
+    ({ gsplat }) => ({ gsplat: reveal.apply({ gsplat, ...RU }).gsplat }));
+  m.updateGenerator();
+  readRoom(m);
+  room = m;
+  if (QS.has('debug')) window.dbg = { room: m, THREE, camera, views, targets, ROOM_K, EXTRA, spark, restOf, ROOM_AT, ROOM_S, ROOM_BOX,
+    rt: v => { rt = window.wipeT[0] = v; document.body.classList.toggle('scrubbing', v > 0 && v < 1); },
+    rtx: (x, v) => { EXTRA[x].rt = window.wipeT[x + 1] = v; document.body.classList.toggle('scrubbing', v > 0 && v < 1); } };
+  if (isRoom(window.scanFocus)) scanCaption(-1), scanCaption(window.scanFocus - 1);   // the caption back from the loading count
+})().catch(e => console.warn('room scan did not load', e))
+  .finally(() => { window.roomReady = true; dispatchEvent(new Event('roomready')); });
+
+// The rooms after the first, downloaded one after another once the first is in. Each box: the middle 96 % of its
+// splats on each axis (in the scan site's frame), a third larger on every side; nothing outside it is drawn, nor
+// splats larger than 4 % of its diagonal. Each comes in by the wipe, as the first one, and goes by it.
+async function loadExtra(r, x) {
+  const said = p => dispatchEvent(new CustomEvent(`room${x + 2}progress`, { detail: p }));   // the step dots show it
+  // drawn whole, without level of detail: on a drifting camera the level of detail kept swapping splats in and out
+  // at the edges of the box, which flickered
+  const m = new SplatMesh({ fileBytes: await download(r.file, p => said(.9 * p), r.version), fileName: r.file.split('/').pop(), lod: false });
+  m.matrixAutoUpdate = false;
+  m.matrix.makeTranslation(r.at.x, r.at.y, r.at.z).multiply(new THREE.Matrix4().makeScale(ROOM_S, -ROOM_S, -ROOM_S));
+  m.visible = false;
+  scene.add(m);
+  await m.initialized;
+  const src = m.packedSplats?.numSplats ? m.packedSplats : m.splats?.lodSplats, axes = [[], [], []];
+  src?.forEachSplat((i, c) => { if (i % 8 === 0) { axes[0].push(c.x); axes[1].push(-c.y); axes[2].push(-c.z); } });
+  const lo = [], hi = [];
+  axes.forEach((v, a) => { v.sort((p, q) => p - q); lo[a] = v[Math.floor(v.length * .02)] ?? -50; hi[a] = v[Math.floor(v.length * .98)] ?? 50; });
+  const box = [lo.map((v, a) => v - (hi[a] - v) * .33), hi.map((v, a) => v + (v - lo[a]) * .33)];
+  const big = .04 * Math.hypot(...box[1].map((v, a) => v - box[0][a]));
+  const fxr = new dyno.Dyno({
+    inTypes: { gsplat: dyno.Gsplat, reveal: 'float', wN: 'vec3', wT: 'vec3', wCam: 'vec3', wPh: 'float', wPx: 'float',
+      oOn: 'float', oN: 'vec3', oT: 'vec3', oCam: 'vec3', oPh: 'float', oPx: 'float',
+      tOn: 'float', tX: 'vec3', tY: 'vec3', tZ: 'vec3', tP: 'vec3', tQ: 'vec4', tK: 'float' },
+    outTypes: { gsplat: dyno.Gsplat },
+    globals: () => [WIPE_GLSL, `
+  vec4 tssrQmul(vec4 a, vec4 b) { return vec4(a.w * b.xyz + b.w * a.xyz + cross(a.xyz, b.xyz), a.w * b.w - dot(a.xyz, b.xyz)); }`],
+    statements: ({ inputs: I, outputs: O }) => `
+      ${O.gsplat} = ${I.gsplat};
+      vec3 sc = ${O.gsplat}.scales;
+      vec3 c = ${O.gsplat}.rgba.rgb;
+      float a = ${O.gsplat}.rgba.a;
+      vec3 q = (${O.gsplat}.center - vec3(${f(r.at.x)}, ${f(r.at.y)}, ${f(r.at.z)})) / ${f(ROOM_S)};
+      bool gone = any(lessThan(q, vec3(${box[0].map(f)}))) || any(greaterThan(q, vec3(${box[1].map(f)}))) || max(sc.x, max(sc.y, sc.z)) / ${f(ROOM_S)} > ${f(big)};
+      // on the way in from the room before: moved so the camera standing at that room's view sees it as from its own
+      if (${I.tOn} > 0.5) {
+        vec3 p0 = ${O.gsplat}.center;
+        ${O.gsplat}.center = ${I.tX} * p0.x + ${I.tY} * p0.y + ${I.tZ} * p0.z + ${I.tP};
+        ${O.gsplat}.quaternion = tssrQmul(${I.tQ}, ${O.gsplat}.quaternion);
+        sc *= ${I.tK};
+      }
+      if (${I.reveal} > 0.5) {
+        float sy = wipeSide(${O.gsplat}.center, ${I.wCam}, ${I.wN}, ${I.wT}, ${I.wPh});
+        float line = exp(-pow(sy / (${I.wPx} * 2.0), 2.0));
+        if (sy > 0.0) { a = 0.0; sc = vec3(0.0); }
+        c = mix(c, vec3(1.0), line * 0.3);   // a faint seam
+        sc = max(sc, vec3(length(${O.gsplat}.center - ${I.wCam}) * ${I.wPx} * 0.5 * line));
+        a = max(a, line * 0.3);
+      }
+      if (${I.oOn} > 0.5) {
+        float so = wipeSide(${O.gsplat}.center, ${I.oCam}, ${I.oN}, ${I.oT}, ${I.oPh});
+        float ol = exp(-pow(so / (${I.oPx} * 2.0), 2.0));
+        if (so < 0.0) { a = 0.0; sc = vec3(0.0); }
+        else { c = mix(c, vec3(1.0), ol * 0.3); sc = max(sc, vec3(length(${O.gsplat}.center - ${I.oCam}) * ${I.oPx} * 0.5 * ol)); }
+      }
+      if (gone) { sc = vec3(0.0); a = 0.0; }
+      ${O.gsplat}.scales = sc;
+      ${O.gsplat}.rgba = vec4(clamp(c, 0.0, 1.0), a);`.trim().split('\n'),
+  });
+  m.worldModifier = dyno.dynoBlock({ gsplat: dyno.Gsplat }, { gsplat: dyno.Gsplat },
+    ({ gsplat }) => ({ gsplat: fxr.apply({ gsplat, ...r.U }).gsplat }));
+  m.updateGenerator();
+  r.mesh = m;
+  said(1);
+}
+EXTRA.reduce((chain, r, x) => chain.then(() => loadExtra(r, x)).catch(e => console.warn(`${r.name} did not load`, e)), roomLoad);
+
+// A view's camera at rest (no drift, no drag), as place() leaves it.
+function restCam(k, W, H) {
+  const v = views[k], rc = camera.clone();
+  rc.fov = Math.min(v.fov * (W > H ? 1 : 1.4), Math.max(70, v.fov));
+  rc.aspect = W / H;
+  if (W > H) rc.setViewOffset(W, H, -W * (.12 + v.shift[0]), -H * v.shift[1], W, H); else rc.clearViewOffset();
+  rc.updateProjectionMatrix();
+  rc.position.set(Math.cos(v.el) * Math.cos(v.az), Math.sin(v.el), -Math.cos(v.el) * Math.sin(v.az)).multiplyScalar(v.d).add(targets[k]);
+  rc.lookAt(targets[k]);
+  rc.rotateZ(v.roll);
+  rc.updateMatrixWorld();
+  return rc;
+}
+// From one room to the next the camera stays at the last room's view until the way is over, and the next room is
+// moved (its splats, in its shader) so that this camera sees it just as the next view's camera will: in camera
+// space x and y scaled by the ratio of the two lenses, plus the difference of the two views' screen shifts.
+const _tA = new THREE.Matrix4(), _tM = new THREE.Matrix4(), _tQ = new THREE.Quaternion();
+let _restKey = '', _rest = null;
+function moveInto(r, t) {
+  const W = lastW, H = lastH, key = `${r.k}:${W}x${H}`;
+  if (key !== _restKey) { _restKey = key; _rest = restCam(r.k, W, H); }
+  const n = _rest, v = views[r.k];
+  const fO = H / 2 / Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2), fN = H / 2 / Math.tan(THREE.MathUtils.degToRad(n.fov) / 2);
+  const k = fN / fO, wide = W > H;
+  const ax = wide ? W * (v.shift[0] - camShift[0]) / fO : 0, ay = wide ? -H * (v.shift[1] - camShift[1]) / fO : 0;
+  // x' = k x - ax z, y' = k y - ay z, z' = z (camera space, looking down -z)
+  _tA.set(k, 0, -ax, 0,  0, k, -ay, 0,  0, 0, 1, 0,  0, 0, 0, 1);
+  _tM.copy(camera.matrixWorld).multiply(_tA).multiply(n.matrixWorldInverse);
+  const e = _tM.elements, U = r.U;
+  U.tX.value.set(e[0], e[1], e[2]); U.tY.value.set(e[4], e[5], e[6]); U.tZ.value.set(e[8], e[9], e[10]); U.tP.value.set(e[12], e[13], e[14]);
+  _tQ.copy(camera.quaternion).multiply(n.quaternion.clone().invert());
+  U.tQ.value.set(_tQ.x, _tQ.y, _tQ.z, _tQ.w);
+  U.tK.value = k;
+}
+
+// The way into the room, all on rt (0 the last spot .. 1 the room), so scrolling back plays it backwards:
+//   .00–.26  a wipe (a plane through the camera, ragged edge, see wipeAt) crosses the screen from the bottom right
+//            corner to the top left one and takes the square away, near and far alike; a little way behind its
+//            edge the bulbs light up over the whole screen, fading in away from it, on the lattice of the step dots;
+//   .31–.52  a second front the same way puts them out again, all but the room's own (they never move);
+//   .54–.80  the same wipe the other way round brings the room in under them, its lights right under them;
+//   .82–.95  they go; the caption comes back once all is in.
+// From one room to the next (see pair) there are no bulbs: two seams cross the screen together, the second a gap
+// behind the first; the first takes the last room away, the second brings the next one in.
+// The lattice is pinned to the room's view: its spacing and offset (BULB_GRID, in units of the camera's focal
+// length, from the point the room's camera looks at) were fitted to the string of lights on the wall, so it
+// stands on the same lights on any screen. The room's own bulbs are cells of it (i, j: column and half-row),
+// in assets/splats/room_bulbs.json; ?edit on the room: a click puts a bulb on the nearest cell or takes it off,
+// Save writes the file.
+const smooth = (a, b, x) => THREE.MathUtils.smoothstep(x, a, b);
+const bulbs = (() => {
+  const cv = Object.assign(document.createElement('canvas'), { className: 'bulbs' });
+  document.body.append(cv);
+  const g = cv.getContext('2d');
+  // one bulb, drawn once: warm core, soft halo (as the page's own row of bulbs)
+  const sprite = document.createElement('canvas');
+  sprite.width = sprite.height = 32;
+  { const s = sprite.getContext('2d'), gr = s.createRadialGradient(16, 16, 0, 16, 16, 16);
+    gr.addColorStop(0, 'rgba(255,243,196,1)'); gr.addColorStop(.16, 'rgba(255,236,170,1)'); gr.addColorStop(.3, 'rgba(232,184,74,.95)');
+    gr.addColorStop(.42, 'rgba(255,200,90,.3)'); gr.addColorStop(1, 'rgba(255,200,90,0)'); s.fillStyle = gr; s.fillRect(0, 0, 32, 32); }
+  let keep = null;   // "i,j" of the room's bulbs; null until the file (or, without it, the lights found in the scan)
+  fetch(`assets/splats/room_bulbs.json?t=${Date.now()}`).then(r => r.ok ? r.json() : null)
+    .then(d => { if (d?.keep && !keep) { keep = new Set(d.keep.map(c => c.join())); key = ''; } }).catch(() => {});
+  let pts = null, key = '', drawn = false, cell = null, up = [0, -1];
+  const frame = latticeFrame;
+  function layout(W, H) {
+    const { rc, P, x0, y0 } = frame(W, H);
+    cell = (i, j) => [x0 + i * P, y0 + j * P];
+    // without a saved list: the cells with a light of the scan within a third of a step
+    if (!keep && roomLights.length) {
+      keep = new Set();
+      const p = new THREE.Vector3();
+      for (const q of roomLights) {
+        p.copy(q).project(rc);
+        const u = ((p.x + 1) / 2 * W - x0) / P, w = ((1 - p.y) / 2 * H - y0) / P;
+        const a = Math.round((u + w) / 2), b = Math.round((u - w) / 2), i = a + b, j = a - b;
+        if (Math.hypot(u - i, w - j) < .33) keep.add(`${i},${j}`);
+      }
+    }
+    // "Up" the way the cut runs: across the picture at the last spot a level line is slanted (its camera is
+    // turned and looks up); n is the screen direction square to it, upwards.
+    const th = THREE.MathUtils.degToRad(WIPE_TILT[1]);
+    up = [-Math.sin(th), -Math.cos(th)];
+    const height = (x, y) => x * up[0] + y * up[1];
+    const lo = Math.min(height(0, 0), height(W, 0), height(0, H), height(W, H)), hi = Math.max(height(0, 0), height(W, 0), height(0, H), height(W, H));
+    // the cells over the whole screen
+    const nav = [...document.querySelectorAll('#dots i')].map(d => { const r = d.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, on: d.classList.contains('on') }; });
+    const i0 = Math.ceil((-P - x0) / P), i1 = Math.floor((W + P - x0) / P), j0 = Math.ceil((-P - y0) / P), j1 = Math.floor((H + P - y0) / P);
+    pts = [];
+    for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
+      if ((i + j) & 1) continue;
+      const [x, y] = cell(i, j);
+      pts.push({ i, j, x, y, at: (height(x, y) - lo) / (hi - lo) });   // 0 at the bottom of the screen, up the cut's way
+    }
+    // the page's row stands on cells (see nav()): those are lit from the start
+    for (const n of nav) {
+      let best = null, bd = 1e9;
+      for (const q of pts) { const d = Math.hypot(q.x - n.x, q.y - n.y); if (d < bd) { bd = d; best = q; } }
+      if (best && bd < P / 2) { best.nav = true; best.on = n.on; }
+    }
+  }
+  function size(W, H) {
+    const dpr = Math.min(devicePixelRatio, 2), k = `${W}x${H}:${roomLights.length}:${keep?.size}`;
+    if (k !== key) { key = k; layout(W, H); cv.width = W * dpr; cv.height = H * dpr; }
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, W, H);
+  }
+  const bulb = (x, y, s, a) => { g.globalAlpha = a; g.drawImage(sprite, x - s / 2, y - s / 2, s, s); };
+  return {
+    // cut: the wipe through the square now (its side(x, y) in pixels), or null once it is past.
+    draw(r, W, H, cut, ownOn = true) {
+      if (!(r > 0 && r < 1)) { if (drawn) { g.clearRect(0, 0, cv.width, cv.height); drawn = false; } return; }
+      size(W, H);
+      drawn = true;
+      const now = performance.now();
+      for (const q of pts) {
+        // lit a little way behind the wipe's (ragged) edge, fading in with the distance from it; all of them
+        // once the square is gone
+        let a = q.nav || !cut ? 1 : Math.max(smooth(.24, .3, r), smooth(.12 * H, .35 * H, -cut.side(q.x, q.y)));
+        const own = ownOn && keep?.has(`${q.i},${q.j}`);
+        if (own) {
+          // the room's bulbs do not stay as they are: they sink to a faint, loose shape once the others are out,
+          // and flicker at random, each to its own beat, while the room comes in under them; then they go
+          const h = Math.sin(q.i * 127.1 + q.j * 311.7) * 43758.5453, seed = h - Math.floor(h);
+          const k = Math.sin(Math.floor(now / (70 + seed * 90)) * 12.9898 + seed * 78.233) * 43758.5453, blink = k - Math.floor(k);
+          a *= (1 - .6 * smooth(.42, .55, r)) * (1 - smooth(.5, .62, r) * (1 - blink * blink)) * (1 - smooth(.8, .95, r));
+        }
+        else { const at = .31 + .21 * q.at; a *= 1 - smooth(at - .006, at + .006, r); }   // the second front
+        // a swell of brightness rolls through them the way the wipe goes (two waves, so it never repeats evenly)
+        if (!q.nav) {
+          const s = q.at * 14 - now * .0024;
+          a *= .35 + .65 * (.5 + .5 * Math.sin(s)) * (.75 + .25 * Math.sin(s * .37 + 1.7));
+        }
+        if (a > .01) bulb(q.x, q.y, (q.on && r < .3 ? 9 : 6) * (.4 + .6 * a) * 2.2, Math.min(1, a) * (own || q.on ? 1 : .75));
+      }
+      g.globalAlpha = 1;
+    },
+    // ?edit, on the room: every cell, the room's bulbs lit, the rest faint
+    edit(W, H) {
+      size(W, H);
+      drawn = true;
+      for (const q of pts) keep?.has(`${q.i},${q.j}`) ? bulb(q.x, q.y, 13, 1) : bulb(q.x, q.y, 7, .3);
+      g.globalAlpha = 1;
+    },
+    toggle(x, y) {
+      let best = null, bd = 1e9;
+      for (const q of pts ?? []) { const d = Math.hypot(q.x - x, q.y - y); if (d < bd) { bd = d; best = q; } }
+      if (!best) return;
+      keep ??= new Set();
+      const k = `${best.i},${best.j}`;
+      keep.has(k) ? keep.delete(k) : keep.add(k);
+    },
+    save: () => fetch('save-bulbs', { method: 'POST', body: JSON.stringify({ keep: [...keep ?? []].map(k => k.split(',').map(Number)) }) }).then(r => r.ok).catch(() => false),
+  };
+})();
+
 let prev = performance.now();
 renderer.setAnimationLoop(t => {
   if (touch && t - prev < 30) return;  // phones: 30 frames a second is plenty for a slow drift
@@ -1028,8 +1628,93 @@ renderer.setAnimationLoop(t => {
   const k = window.scanFocus ?? -1;
   if (k >= 0) shownAt = t;
   if (t - shownAt > 1500) return;      // off screen: keep the GPU idle
-  place(t, k, dt);
-  effects(t, k, dt);
+  // The scroll sets where each transition should be; rt (and each next room's rt) follows it eased, and no faster
+  // than the whole way in two seconds (a jump from the place dots plays it through). Without the room loaded it
+  // stops at the bulbs.
+  const ease = (r, want) => r + THREE.MathUtils.clamp((want - r) * (1 - Math.exp(-dt * .006)), -dt * .0005, dt * .0005);
+  const follow = (r, z, loaded, cap = .45) => {
+    const want = loaded ? window.wipeT[z] : Math.min(window.wipeT[z], cap);
+    let n = ease(r, want);
+    if (Math.abs(want - n) < 2e-3) n = want;
+    if (n >= 1 && r < 1) roomSettled = t;
+    return n;
+  };
+  const zone = k === ROOM_K || k === ROOM_K - 1;
+  rt = zone ? follow(rt, 0, room) : isRoom(k) ? 1 : 0;
+  let into = null;                      // the next room whose way in the scroll is on, if any
+  EXTRA.forEach((r, x) => {
+    const z = k === r.k || k === r.k - 1;
+    r.rt = z ? follow(r.rt, x + 1, r.mesh, .1) : k >= r.k ? 1 : 0;
+    if (z) into = r;
+  });
+  // the stop the camera is at: into the first room past the middle of the way in the room's, before it the square's;
+  // from one room to the next the last room's until the way is over (the next one is drawn in that camera, see pair)
+  const pk = into ? (into.rt >= 1 ? into.k : into.k - 1) : zone ? (rt >= .3 ? ROOM_K : ROOM_K - 1) : k, shown = sceneOf(pk);
+  roomPass = !!into && into.rt > 0 && into.rt < 1;
+  place(t, pk, dt);
+  placeStepDots(lastW, lastH);
+  // a transition: the scan before wiped away (.00–.26), the next one wiped in (.54–.80), the same way across
+  const wipe = r => wipeAt(smooth(0, .26, r), WIPE_TILT[0] + (WIPE_TILT[1] - WIPE_TILT[0]) * smooth(0, .3, r), r * 8, camera, lastW, lastH);
+  // (before it starts its line waits well off screen: its glow would light up the nearest splats at the corner)
+  const wipeIn = r => wipeAt(r < .54 ? -.25 : smooth(.54, .8, r), WIPE_TILT[1] - (WIPE_TILT[1] - WIPE_TILT[0]) * smooth(.54, .8, r), r * 8, camera, lastW, lastH);
+  // From one room to the next: two seams the same way across, a gap between them. The first takes the last room away,
+  // the second, following it, brings the next one in; in the gap neither.
+  const GAP = .12;
+  const pair = r => {
+    const f = -.06 + r * (1.12 + GAP), deg = WIPE_TILT[0] + (WIPE_TILT[1] - WIPE_TILT[0]) * r;
+    return [wipeAt(f, deg, r * 8, camera, lastW, lastH), wipeAt(f - GAP, deg, r * 8, camera, lastW, lastH)];
+  };
+  const set = (u, w, p = 'w') => { u[p + 'N'].value.copy(w.N); u[p + 'T'].value.copy(w.T); u[p + 'Cam'].value.copy(w.cam); u[p + 'Ph'].value = w.ph; u[p + 'Px'].value = w.px; };
+  let cutAt = null;
+  if (zone && rt > 0 && rt < .3) {
+    cutAt = wipe(rt);
+    U.wOn.value = 1; set(U, cutAt);
+    U.fade.value = 1 - smooth(.26, .3, rt);
+  } else { U.wOn.value = 0; U.fade.value = 1; }
+  city.visible = shown === 0;
+  effects(t, zone || isRoom(k) ? ROOM_K - 1 : k, dt);
+  // on the way into a next room the scan before it goes by the first seam, the next one comes by the second
+  // Both rooms stay in the scene all the while either end of the way is on (the one not seen wholly cut away):
+  // Spark shows its last sorted set of splats for a few frames after a mesh is shown or hidden, and with the camera
+  // cut at the same moment that showed the next room in the wrong place (a blink, or a jump to another view).
+  const seams = into ? pair(Math.min(1, Math.max(0, into.rt))) : null;
+  const leaving = seams?.[0], before = into ? sceneOf(into.k - 1) : -1;
+  if (into && into.rt < 1) moveInto(into, t);
+  if (room) {
+    room.visible = shown === 1 || before === 1;   // drawn (all hidden by its reveal) from the cut on, so its level of detail is in by .72
+    RU.reveal.value = rt < .8 ? 1 : 0;
+    if (rt < .8) set(RU, wipeIn(rt));
+    RU.oOn.value = leaving && before === 1 ? 1 : 0;
+    if (RU.oOn.value) set(RU, leaving, 'o');
+    // the section glides with the camera from the view it left to the one it goes to (yaw the short way round)
+    if (shown === 1) {
+      const to = ROOM_VIEWS[pk - ROOM_K];
+      if (pk !== secK) { secFrom = secK < 0 ? to : { ...secNow }; secK = pk; }
+      const e = ease5(Math.min(1, fly.t / fly.dur));
+      secNow.yaw = secFrom.yaw + THREE.MathUtils.radToDeg(wrap(THREE.MathUtils.degToRad(to.yaw - secFrom.yaw))) * e;
+      secNow.cut = secFrom.cut + (to.cut - secFrom.cut) * e;
+      const s = sectionOf(secNow.yaw, secNow.cut);
+      RU.cutN.value.set(...s.n); RU.cutD.value = s.d;
+    } else secK = -1;
+    const sig = RU.reveal.value + RU.cutD.value.toFixed(3) + secNow.yaw.toFixed(2) + (rt < .8 ? rt.toFixed(4) : '') + (RU.oOn.value ? into.rt.toFixed(4) : '');
+    if (sig !== roomLast && (!touch || t - lastFx > 120)) { roomLast = sig; room.updateVersion(); }
+  }
+  EXTRA.forEach((r, x) => {
+    if (!r.mesh) return;
+    const coming = into === r && r.rt < 1;
+    r.mesh.visible = shown === 2 + x || into === r || before === 2 + x;
+    r.U.reveal.value = r.rt < 1 ? 1 : 0;
+    r.U.tOn.value = coming ? 1 : 0;
+    if (coming) set(r.U, seams[1]);
+    r.U.oOn.value = leaving && before === 2 + x ? 1 : 0;
+    if (r.U.oOn.value) set(r.U, leaving, 'o');
+    const sig = r.U.reveal.value + (r.rt < 1 ? r.rt.toFixed(4) : '') + (r.U.oOn.value ? into.rt.toFixed(4) : '') + (coming && r.rt > 0 ? r.U.tP.value.toArray().map(v => v.toFixed(4)).join() : '');
+    if (sig !== r.last && (!touch || t - lastFx > 120)) { r.last = sig; r.mesh.updateVersion(); }
+  });
+  const scrubbing = into ? into.rt : zone ? rt : 1;
+  if (into || zone) document.body.classList.toggle('scrubbing', scrubbing > 0 && scrubbing < 1);
+  if (EDIT && k === ROOM_K && rt >= 1) bulbs.edit(lastW, lastH);
+  else bulbs.draw(zone ? rt : 0, lastW, lastH, cutAt);   // from room to room no bulbs
   drawSpots(k);
   renderer.render(scene, camera);
 });

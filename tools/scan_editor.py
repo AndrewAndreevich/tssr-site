@@ -1,9 +1,10 @@
-"""Serves the site locally with a save endpoint for the scan editor.
+"""Serves the site locally with save endpoints for the scan editor.
 
     python tools/scan_editor.py [port]        then open http://localhost:8772/?edit
 
 The editor's Save button posts every place's view to /save-views, written to
-assets/splats/scan_views.json; the page reads that file on load, on the site too once it is pushed.
+assets/splats/scan_views.json, and on the room the bulbs clicked on its wall to /save-bulbs
+(assets/splats/room_bulbs.json); the page reads those files on load, on the site too once they are pushed.
 """
 import http.server
 import json
@@ -11,7 +12,8 @@ import pathlib
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-OUT = ROOT / 'assets' / 'splats' / 'scan_views.json'
+OUT = {'/save-views': ROOT / 'assets' / 'splats' / 'scan_views.json',
+       '/save-bulbs': ROOT / 'assets' / 'splats' / 'room_bulbs.json'}
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -23,10 +25,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().end_headers()
 
     def do_POST(self):
-        if self.path != '/save-views':
+        if self.path not in OUT:
             return self.send_error(404)
         data = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-        OUT.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+        OUT[self.path].write_text(json.dumps(data, ensure_ascii=False) + '\n', encoding='utf-8')
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b'ok')
